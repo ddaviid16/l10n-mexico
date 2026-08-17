@@ -38,10 +38,18 @@ class TestCfdiParser(TransactionCase):
                     "company_id": cls.company.id,
                 }
             )
+        cls.taxpayer = cls.env["l10n_mx_sat.taxpayer"].create(
+            {
+                "name": "Razon Social Demo",
+                "company_id": cls.company.id,
+                "rfc": RECEPTOR_RFC,
+                "purchase_journal_id": cls.journal.id,
+            }
+        )
         # Create a mock download request
         cls.request = cls.env["l10n_mx_sat.download.request"].create(
             {
-                "company_id": cls.company.id,
+                "taxpayer_id": cls.taxpayer.id,
                 "document_kind": "cfdi",
                 "direction": "received",
                 "request_type": "xml",

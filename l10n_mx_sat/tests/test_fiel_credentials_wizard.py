@@ -24,101 +24,111 @@ class TestFielCredentialsWizard(TransactionCase):
         super().setUpClass()
         cls.company = cls.env.company
         cls.company.write({"country_id": cls.env.ref("base.mx").id})
-
-    def test_wizard_starts_empty_even_with_existing_credentials(self):
-        self.company.write(
+        cls.taxpayer = cls.env["l10n_mx_sat.taxpayer"].create(
             {
-                "l10n_mx_sat_fiel_cer": MOCK_CER,
-                "l10n_mx_sat_fiel_key": MOCK_KEY,
-                "l10n_mx_sat_fiel_password": MOCK_PASSWORD,
+                "name": "Razon Social Wizard",
+                "company_id": cls.company.id,
             }
         )
-        wizard = self.env["l10n_mx_sat.fiel.credentials.wizard"].create(
-            {"company_id": self.company.id}
+
+    def _wizard(self, **vals):
+        return self.env["l10n_mx_sat.fiel.credentials.wizard"].create(
+            {"taxpayer_id": self.taxpayer.id, **vals}
         )
+
+    def test_wizard_starts_empty_even_with_existing_credentials(self):
+        self.taxpayer.write(
+            {
+                "fiel_cer": MOCK_CER,
+                "fiel_key": MOCK_KEY,
+                "fiel_password": MOCK_PASSWORD,
+            }
+        )
+        wizard = self._wizard()
         self.assertFalse(wizard.fiel_cer)
         self.assertFalse(wizard.fiel_key)
         self.assertFalse(wizard.fiel_password)
 
     def test_wizard_requires_all_fields(self):
-        wizard = self.env["l10n_mx_sat.fiel.credentials.wizard"].create(
-            {"company_id": self.company.id}
-        )
+        wizard = self._wizard()
         with self.assertRaises(UserError) as err:
             wizard.action_apply()
         self.assertIn("certificate", err.exception.args[0].lower())
 
     def test_wizard_requires_key(self):
-        wizard = self.env["l10n_mx_sat.fiel.credentials.wizard"].create(
-            {
-                "company_id": self.company.id,
-                "fiel_cer": MOCK_CER,
-            }
-        )
+        wizard = self._wizard(fiel_cer=MOCK_CER)
         with self.assertRaises(UserError) as err:
             wizard.action_apply()
         self.assertIn("private key", err.exception.args[0].lower())
 
     def test_wizard_requires_password(self):
-        wizard = self.env["l10n_mx_sat.fiel.credentials.wizard"].create(
-            {
-                "company_id": self.company.id,
-                "fiel_cer": MOCK_CER,
-                "fiel_key": MOCK_KEY,
-            }
-        )
+        wizard = self._wizard(fiel_cer=MOCK_CER, fiel_key=MOCK_KEY)
         with self.assertRaises(UserError) as err:
             wizard.action_apply()
         self.assertIn("password", err.exception.args[0].lower())
 
     def test_open_fiel_wizard_action(self):
-        action = self.company.action_l10n_mx_sat_open_fiel_wizard()
+        action = self.taxpayer.action_open_fiel_wizard()
         self.assertEqual(action["res_model"], "l10n_mx_sat.fiel.credentials.wizard")
         self.assertEqual(action["target"], "new")
-        self.assertEqual(action["context"]["default_company_id"], self.company.id)
+        self.assertEqual(action["context"]["default_taxpayer_id"], self.taxpayer.id)
 
     @patch(_WIZ_SVC)
-    def test_wizard_sets_company_vat_from_fiel(self, MockSatClient):
-        mock_client = MockSatClient.return_value
-        mock_client.rfc = "RFCFIEL123"
-        self.company.vat = False
-        wizard = self.env["l10n_mx_sat.fiel.credentials.wizard"].create(
-            {
-                "company_id": self.company.id,
-                "fiel_cer": MOCK_CER,
-                "fiel_key": MOCK_KEY,
-                "fiel_password": MOCK_PASSWORD,
-            }
+    def test_wizard_sets_taxpayer_rfc_from_fiel(self, MockSatClient):
+        MockSatClient.return_value.rfc = "RFCFIEL123"
+        wizard = self._wizard(
+            fiel_cer=MOCK_CER,
+            fiel_key=MOCK_KEY,
+            fiel_password=MOCK_PASSWORD,
         )
         wizard.action_apply()
-        self.assertEqual(self.company.vat, "RFCFIEL123")
-        self.assertTrue(self.company.l10n_mx_sat_has_credentials())
+        self.assertEqual(self.taxpayer.rfc, "RFCFIEL123")
+        self.assertTrue(self.taxpayer._has_credentials())
 
     @patch(_WIZ_SVC)
     def test_wizard_normalizes_fiel_rfc(self, MockSatClient):
         MockSatClient.return_value.rfc = "  abc010101xyz  "
-        self.company.vat = False
-        wizard = self.env["l10n_mx_sat.fiel.credentials.wizard"].create(
-            {
-                "company_id": self.company.id,
-                "fiel_cer": MOCK_CER,
-                "fiel_key": MOCK_KEY,
-                "fiel_password": MOCK_PASSWORD,
-            }
+        wizard = self._wizard(
+            fiel_cer=MOCK_CER,
+            fiel_key=MOCK_KEY,
+            fiel_password=MOCK_PASSWORD,
         )
         wizard.action_apply()
-        self.assertEqual(self.company.vat, "ABC010101XYZ")
+        self.assertEqual(self.taxpayer.rfc, "ABC010101XYZ")
+
+    @patch(_WIZ_SVC)
+    def test_wizard_renewal_keeps_same_rfc(self, MockSatClient):
+        MockSatClient.return_value.rfc = "ABC010101XYZ"
+        self.taxpayer.rfc = "ABC010101XYZ"
+        wizard = self._wizard(
+            fiel_cer=MOCK_CER,
+            fiel_key=MOCK_KEY,
+            fiel_password="renewed",
+        )
+        wizard.action_apply()
+        self.assertEqual(self.taxpayer.rfc, "ABC010101XYZ")
+        self.assertEqual(self.taxpayer.fiel_password, "renewed")
+
+    @patch(_WIZ_SVC)
+    def test_wizard_rejects_fiel_of_another_rfc(self, MockSatClient):
+        MockSatClient.return_value.rfc = "ZZZ010101ZZZ"
+        self.taxpayer.rfc = "ABC010101XYZ"
+        wizard = self._wizard(
+            fiel_cer=MOCK_CER,
+            fiel_key=MOCK_KEY,
+            fiel_password=MOCK_PASSWORD,
+        )
+        with self.assertRaises(UserError) as err:
+            wizard.action_apply()
+        self.assertIn("ZZZ010101ZZZ", err.exception.args[0])
 
     @patch(_WIZ_SVC)
     def test_wizard_empty_rfc_raises(self, MockSatClient):
         MockSatClient.return_value.rfc = ""
-        wizard = self.env["l10n_mx_sat.fiel.credentials.wizard"].create(
-            {
-                "company_id": self.company.id,
-                "fiel_cer": MOCK_CER,
-                "fiel_key": MOCK_KEY,
-                "fiel_password": MOCK_PASSWORD,
-            }
+        wizard = self._wizard(
+            fiel_cer=MOCK_CER,
+            fiel_key=MOCK_KEY,
+            fiel_password=MOCK_PASSWORD,
         )
         with self.assertRaises(UserError) as err:
             wizard.action_apply()
@@ -127,13 +137,10 @@ class TestFielCredentialsWizard(TransactionCase):
     @patch(_WIZ_SVC)
     def test_wizard_satcfdi_exception_raises_user_error(self, MockSatClient):
         MockSatClient.side_effect = Exception("bad key")
-        wizard = self.env["l10n_mx_sat.fiel.credentials.wizard"].create(
-            {
-                "company_id": self.company.id,
-                "fiel_cer": MOCK_CER,
-                "fiel_key": MOCK_KEY,
-                "fiel_password": MOCK_PASSWORD,
-            }
+        wizard = self._wizard(
+            fiel_cer=MOCK_CER,
+            fiel_key=MOCK_KEY,
+            fiel_password=MOCK_PASSWORD,
         )
         with self.assertRaises(UserError) as err:
             wizard.action_apply()

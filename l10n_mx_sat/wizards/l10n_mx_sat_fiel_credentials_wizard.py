@@ -13,9 +13,9 @@ class L10nMxSatFielCredentialsWizard(models.TransientModel):
     _name = "l10n_mx_sat.fiel.credentials.wizard"
     _description = "SAT FIEL Credentials Wizard"
 
-    company_id = fields.Many2one(
-        comodel_name="res.company",
-        string="Company",
+    taxpayer_id = fields.Many2one(
+        comodel_name="l10n_mx_sat.taxpayer",
+        string="Taxpayer",
         required=True,
         readonly=True,
     )
@@ -33,7 +33,7 @@ class L10nMxSatFielCredentialsWizard(models.TransientModel):
     )
 
     def action_apply(self):
-        """Store new FIEL credentials on the company."""
+        """Store new FIEL credentials on the taxpayer."""
         for wizard in self:
             if not wizard.fiel_cer:
                 raise UserError(
@@ -46,12 +46,26 @@ class L10nMxSatFielCredentialsWizard(models.TransientModel):
             if not wizard.fiel_password:
                 raise UserError(wizard.env._("Enter the FIEL password first."))
             fiel_rfc = wizard._get_fiel_rfc()
-            wizard.company_id.with_context(l10n_mx_sat_sync_vat_from_fiel=True).write(
+            taxpayer = wizard.taxpayer_id
+            current_rfc = (taxpayer.rfc or "").strip().upper()
+            if current_rfc and current_rfc != fiel_rfc:
+                raise UserError(
+                    wizard.env._(
+                        "This FIEL belongs to RFC %(fiel)s but the taxpayer is "
+                        "registered as %(taxpayer)s. Create a separate taxpayer "
+                        "for that RFC instead of replacing this one.",
+                        fiel=fiel_rfc,
+                        taxpayer=current_rfc,
+                    )
+                )
+            # FIEL fields are restricted to base.group_system; the wizard itself
+            # is restricted to SAT managers, who may upload but not read them.
+            taxpayer.sudo().write(
                 {
-                    "l10n_mx_sat_fiel_cer": wizard.fiel_cer,
-                    "l10n_mx_sat_fiel_key": wizard.fiel_key,
-                    "l10n_mx_sat_fiel_password": wizard.fiel_password,
-                    "vat": fiel_rfc,
+                    "fiel_cer": wizard.fiel_cer,
+                    "fiel_key": wizard.fiel_key,
+                    "fiel_password": wizard.fiel_password,
+                    "rfc": fiel_rfc,
                 }
             )
         return {"type": "ir.actions.act_window_close"}

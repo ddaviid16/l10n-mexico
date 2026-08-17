@@ -273,27 +273,36 @@ class CFDIService(models.Model):
             )
         return signer
 
-    def _get_cancel_signer(self, issuer):
-        """Prefer company FIEL (l10n_mx_sat) then fall back to issuer CSD."""
+    def _get_sat_taxpayer(self, issuer):
+        """Return the l10n_mx_sat taxpayer holding the FIEL of the issuer RFC."""
+        if "l10n_mx_sat.taxpayer" not in self.env or not issuer.vat:
+            return None
         company = issuer.company_id or self.env.company
-        if (
-            hasattr(company, "l10n_mx_sat_fiel_cer")
-            and company.l10n_mx_sat_fiel_cer
-            and company.l10n_mx_sat_fiel_key
-            and company.l10n_mx_sat_fiel_password
-        ):
+        taxpayer = (
+            self.env["l10n_mx_sat.taxpayer"]
+            .sudo()
+            .search(
+                [
+                    ("rfc", "=", issuer.vat.strip().upper()),
+                    ("company_id", "=", company.id),
+                ],
+                limit=1,
+            )
+        )
+        return taxpayer if taxpayer and taxpayer._has_credentials() else None
+
+    def _get_cancel_signer(self, issuer):
+        """Prefer the SAT FIEL of the issuer RFC (l10n_mx_sat), else its CSD."""
+        taxpayer = self._get_sat_taxpayer(issuer)
+        if taxpayer:
             try:
                 return Signer.load(
-                    certificate=cfdi_normalize.decode_binary_field(
-                        company.l10n_mx_sat_fiel_cer
-                    ),
-                    key=cfdi_normalize.decode_binary_field(
-                        company.l10n_mx_sat_fiel_key
-                    ),
-                    password=company.l10n_mx_sat_fiel_password,
+                    certificate=cfdi_normalize.decode_binary_field(taxpayer.fiel_cer),
+                    key=cfdi_normalize.decode_binary_field(taxpayer.fiel_key),
+                    password=taxpayer.fiel_password,
                 )
             except Exception:
-                _logger.warning("Company FIEL could not be loaded; falling back to CSD")
+                _logger.warning("SAT FIEL could not be loaded; falling back to CSD")
         return self._get_csd_signer(issuer)
 
     def validate_csd(self, issuer):

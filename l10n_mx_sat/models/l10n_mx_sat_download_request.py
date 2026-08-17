@@ -50,7 +50,7 @@ _IMMEDIATE_PROCESS_STATES = ("draft", "ready", "downloading")
 _WAITING_SAT_STATES = ("requested", "processing")
 _VERIFY_RETRY_MINUTES = 15
 
-_SYNC_PENDING_PARAM = "l10n_mx_sat.sync_pending_company_ids"
+_SYNC_PENDING_PARAM = "l10n_mx_sat.sync_pending_taxpayer_ids"
 _QUEUED_REQUESTS_PARAM = "l10n_mx_sat.queued_request_ids"
 _CRON_BATCH_SIZE = 4  # 0 = unlimited (tests)
 
@@ -61,11 +61,19 @@ class L10nMxSatDownloadRequest(models.Model):
     _order = "create_date desc"
 
     name = fields.Char(string="Description", compute="_compute_name", store=True)
+    taxpayer_id = fields.Many2one(
+        comodel_name="l10n_mx_sat.taxpayer",
+        string="Taxpayer",
+        required=True,
+        index=True,
+        ondelete="restrict",
+    )
     company_id = fields.Many2one(
         comodel_name="res.company",
         string="Company",
-        required=True,
-        default=lambda self: self.env.company,
+        related="taxpayer_id.company_id",
+        store=True,
+        readonly=True,
         index=True,
     )
     document_kind = fields.Selection(
@@ -149,14 +157,12 @@ class L10nMxSatDownloadRequest(models.Model):
 
     _request_fingerprint_uniq = models.Constraint(
         "UNIQUE(request_fingerprint)",
-        "A SAT download request with the same company and date range already exists.",
+        "A SAT download request with the same taxpayer and date range already exists.",
     )
 
     @api.depends(
-        "company_id.vat",
-        "company_id.l10n_mx_sat_fiel_cer",
-        "company_id.l10n_mx_sat_fiel_key",
-        "company_id.l10n_mx_sat_fiel_password",
+        "taxpayer_id.rfc",
+        "taxpayer_id.name",
         "document_kind",
         "direction",
         "request_type",
@@ -169,7 +175,7 @@ class L10nMxSatDownloadRequest(models.Model):
         direction_labels = dict(fields_info["direction"]["selection"])
         type_labels = dict(fields_info["request_type"]["selection"])
         for rec in self:
-            rfc = rec._get_display_rfc(rec.company_id)
+            rfc = rec._get_display_rfc(rec.taxpayer_id)
             kind = kind_labels.get(rec.document_kind, "?")
             direction = direction_labels.get(rec.direction, "?")
             req_type = type_labels.get(rec.request_type, "?")
@@ -178,15 +184,15 @@ class L10nMxSatDownloadRequest(models.Model):
             rec.name = f"{rfc} / {kind} / {direction} / {req_type} / {fi} - {ff}"
 
     @api.model
-    def _get_display_rfc(self, company):
-        """Resolve RFC for labels, falling back to FIEL when VAT is empty."""
-        rfc = company.vat.strip().upper() if company.vat else False
-        if not rfc and company.l10n_mx_sat_has_credentials():
+    def _get_display_rfc(self, taxpayer):
+        """Resolve RFC for labels, falling back to the FIEL certificate."""
+        rfc = taxpayer.rfc.strip().upper() if taxpayer.rfc else False
+        if not rfc and taxpayer and taxpayer._has_credentials():
             try:
-                rfc = company.l10n_mx_sat_get_rfc()
+                rfc = taxpayer._get_rfc()
             except Exception:
                 rfc = False
-        return rfc or company.name or "?"
+        return rfc or taxpayer.name or "?"
 
     @api.model_create_multi
     def create(self, vals_list):
@@ -206,7 +212,7 @@ class L10nMxSatDownloadRequest(models.Model):
 
     @api.model
     def _build_fingerprint_from_vals(self, vals):
-        company_id = vals.get("company_id") or self.env.company.id
+        taxpayer_id = vals.get("taxpayer_id")
         date_from = vals.get("date_from")
         date_to = vals.get("date_to")
         if isinstance(date_from, str):
@@ -214,7 +220,7 @@ class L10nMxSatDownloadRequest(models.Model):
         if isinstance(date_to, str):
             date_to = fields.Datetime.to_datetime(date_to)
         return build_request_fingerprint(
-            company_id,
+            taxpayer_id,
             vals.get("document_kind"),
             vals.get("direction"),
             vals.get("request_type"),
@@ -275,7 +281,7 @@ class L10nMxSatDownloadRequest(models.Model):
                 "next_process_at": False,
             }
         )
-        self._update_company_last_sync()
+        self._update_taxpayer_last_sync()
 
     def _schedule_sat_verification_retry(self, minutes=None):
         """Defer the next SAT status check for accepted/processing requests."""
@@ -337,10 +343,10 @@ class L10nMxSatDownloadRequest(models.Model):
 
     def _action_request(self):
         self.ensure_one()
-        company = self.company_id
-        client = company.l10n_mx_sat_get_client()
+        taxpayer = self.taxpayer_id
+        client = taxpayer._get_client()
         token = client.authenticate()
-        rfc = company.l10n_mx_sat_get_rfc(client)
+        rfc = taxpayer._get_rfc(client)
 
         result = client.request_download(
             token,
@@ -388,7 +394,7 @@ class L10nMxSatDownloadRequest(models.Model):
                     "next_process_at": False,
                 }
             )
-            self._update_company_last_sync()
+            self._update_taxpayer_last_sync()
             return
 
         if cod_estatus == SAT_CODE_MAX_ELEMENTS:
@@ -437,7 +443,7 @@ class L10nMxSatDownloadRequest(models.Model):
                 "date_to": mid,
                 "state": "draft",
                 "request_fingerprint": build_request_fingerprint(
-                    self.company_id.id,
+                    self.taxpayer_id.id,
                     self.document_kind,
                     self.direction,
                     self.request_type,
@@ -455,7 +461,7 @@ class L10nMxSatDownloadRequest(models.Model):
                     "request_fingerprint",
                     "=",
                     build_request_fingerprint(
-                        self.company_id.id,
+                        self.taxpayer_id.id,
                         self.document_kind,
                         self.direction,
                         self.request_type,
@@ -469,7 +475,7 @@ class L10nMxSatDownloadRequest(models.Model):
         if not second_half:
             self.create(
                 {
-                    "company_id": self.company_id.id,
+                    "taxpayer_id": self.taxpayer_id.id,
                     "document_kind": self.document_kind,
                     "direction": self.direction,
                     "request_type": self.request_type,
@@ -481,10 +487,10 @@ class L10nMxSatDownloadRequest(models.Model):
 
     def _action_verify(self):
         self.ensure_one()
-        company = self.company_id
-        client = company.l10n_mx_sat_get_client()
+        taxpayer = self.taxpayer_id
+        client = taxpayer._get_client()
         token = client.authenticate()
-        rfc = company.l10n_mx_sat_get_rfc(client)
+        rfc = taxpayer._get_rfc(client)
 
         result = client.verify_download(
             token, rfc, self.sat_request_id, document_kind=self.document_kind
@@ -659,10 +665,10 @@ class L10nMxSatDownloadRequest(models.Model):
 
     def _action_download(self):
         self.ensure_one()
-        company = self.company_id
-        client = company.l10n_mx_sat_get_client()
+        taxpayer = self.taxpayer_id
+        client = taxpayer._get_client()
         token = client.authenticate()
-        rfc = company.l10n_mx_sat_get_rfc(client)
+        rfc = taxpayer._get_rfc(client)
 
         self.write({"state": "downloading"})
 
@@ -687,7 +693,7 @@ class L10nMxSatDownloadRequest(models.Model):
                     package.write({"state": "error"})
                     continue
 
-                proc = self._process_package(package_b64, company)
+                proc = self._process_package(package_b64, taxpayer)
                 documents |= proc["documents"]
                 document_count += proc["processed"]
                 package.write({"state": "processed"})
@@ -716,21 +722,19 @@ class L10nMxSatDownloadRequest(models.Model):
                     "next_process_at": False,
                 }
             )
-            self._update_company_last_sync()
+            self._update_taxpayer_last_sync()
 
-    def _update_company_last_sync(self):
+    def _update_taxpayer_last_sync(self):
         self.ensure_one()
         field_name = (
-            "l10n_mx_sat_last_metadata_sync"
-            if self.request_type == "metadata"
-            else "l10n_mx_sat_last_sync"
+            "last_metadata_sync" if self.request_type == "metadata" else "last_sync"
         )
-        self.company_id.sudo().write({field_name: fields.Datetime.now()})
+        self.taxpayer_id.sudo().write({field_name: fields.Datetime.now()})
 
     _ZIP_MAX_SIZE = 500 * 1024 * 1024
     _ZIP_MAX_FILES = 10_000
 
-    def _process_package(self, package_b64, company):
+    def _process_package(self, package_b64, taxpayer):
         """Extract ZIP and process XML or metadata files."""
         documents = self.env["l10n_mx_sat.document"]
         processed = 0
@@ -753,7 +757,7 @@ class L10nMxSatDownloadRequest(models.Model):
                     for row in rows:
                         doc = self.env[
                             "l10n_mx_sat.document"
-                        ]._upsert_from_metadata_row(row, company, self)
+                        ]._upsert_from_metadata_row(row, taxpayer, self)
                         if doc:
                             documents |= doc
                             processed += 1
@@ -763,7 +767,7 @@ class L10nMxSatDownloadRequest(models.Model):
                     except etree.XMLSyntaxError:
                         continue
                     doc = self.env["l10n_mx_sat.document"]._upsert_from_xml(
-                        tree, content, company, self
+                        tree, content, taxpayer, self
                     )
                     if doc:
                         documents |= doc
@@ -806,12 +810,12 @@ class L10nMxSatDownloadRequest(models.Model):
         self._write_param_ids(param_name, remaining)
 
     @api.model
-    def _mark_company_sync_pending(self, companies):
-        """Register companies whose SAT sync should be processed by the cron."""
-        companies = companies.exists()
-        if not companies:
+    def _mark_taxpayer_sync_pending(self, taxpayers):
+        """Register taxpayers whose SAT sync should be processed by the cron."""
+        taxpayers = taxpayers.exists()
+        if not taxpayers:
             return
-        self._add_param_ids(_SYNC_PENDING_PARAM, companies.ids)
+        self._add_param_ids(_SYNC_PENDING_PARAM, taxpayers.ids)
 
     @api.model
     def _is_request_executable(self, request, now=None):
@@ -824,7 +828,7 @@ class L10nMxSatDownloadRequest(models.Model):
         return False
 
     @api.model
-    def _build_executable_work_domain(self, company_ids=None):
+    def _build_executable_work_domain(self, taxpayer_ids=None):
         """Domain for SAT requests that the cron can process immediately."""
         now = fields.Datetime.now()
         domain = [
@@ -836,8 +840,8 @@ class L10nMxSatDownloadRequest(models.Model):
             ("next_process_at", "=", False),
             ("next_process_at", "<=", now),
         ]
-        if company_ids:
-            domain = [("company_id", "in", list(company_ids))] + domain
+        if taxpayer_ids:
+            domain = [("taxpayer_id", "in", list(taxpayer_ids))] + domain
         return domain
 
     @api.model
@@ -853,7 +857,7 @@ class L10nMxSatDownloadRequest(models.Model):
                 cron._trigger()
 
     @api.model
-    def _cron_has_immediate_work(self, pending_company_ids):
+    def _cron_has_immediate_work(self, pending_taxpayer_ids):
         """Return True when the cron has executable work without waiting."""
         queued_ids = self._parse_param_ids(_QUEUED_REQUESTS_PARAM)
         if queued_ids:
@@ -863,35 +867,35 @@ class L10nMxSatDownloadRequest(models.Model):
                 self._is_request_executable(request, now) for request in queued_requests
             ):
                 return True
-        if not pending_company_ids:
+        if not pending_taxpayer_ids:
             return False
         return bool(
             self.search_count(
-                self._build_executable_work_domain(pending_company_ids),
+                self._build_executable_work_domain(pending_taxpayer_ids),
                 limit=1,
             )
         )
 
     @api.model
-    def _cron_get_next_deferred_at(self, pending_company_ids):
+    def _cron_get_next_deferred_at(self, pending_taxpayer_ids):
         """Return the earliest future verification datetime, if any."""
         now = fields.Datetime.now()
         domain = [
             ("state", "in", _WAITING_SAT_STATES),
             ("next_process_at", ">", now),
         ]
-        if pending_company_ids:
-            domain = [("company_id", "in", list(pending_company_ids))] + domain
+        if pending_taxpayer_ids:
+            domain = [("taxpayer_id", "in", list(pending_taxpayer_ids))] + domain
         request = self.search(domain, order="next_process_at asc", limit=1)
         return request.next_process_at if request else None
 
     @api.model
-    def _cron_schedule_follow_up(self, pending_company_ids):
+    def _cron_schedule_follow_up(self, pending_taxpayer_ids):
         """Relaunch the cron immediately or defer SAT verification checks."""
-        if self._cron_has_immediate_work(pending_company_ids):
+        if self._cron_has_immediate_work(pending_taxpayer_ids):
             self._cron_trigger()
             return
-        deferred_at = self._cron_get_next_deferred_at(pending_company_ids)
+        deferred_at = self._cron_get_next_deferred_at(pending_taxpayer_ids)
         if deferred_at:
             self._cron_trigger(at=deferred_at)
 
@@ -916,8 +920,8 @@ class L10nMxSatDownloadRequest(models.Model):
         }
 
     @api.model
-    def _collect_pending_work(self, pending_companies):
-        """Build ordered request list: queued first, then company pending rows."""
+    def _collect_pending_work(self, pending_taxpayers):
+        """Build ordered request list: queued first, then taxpayer pending rows."""
         requests_to_process = self.browse()
         now = fields.Datetime.now()
         queued_ids = self._parse_param_ids(_QUEUED_REQUESTS_PARAM)
@@ -931,73 +935,78 @@ class L10nMxSatDownloadRequest(models.Model):
             self._write_param_ids(_QUEUED_REQUESTS_PARAM, queued_requests.ids)
 
         selected_ids = set(requests_to_process.ids)
-        if pending_companies:
-            company_requests = self.search(
-                self._build_executable_work_domain(pending_companies.ids),
+        if pending_taxpayers:
+            taxpayer_requests = self.search(
+                self._build_executable_work_domain(pending_taxpayers.ids),
                 order="create_date asc",
             )
-            for request in company_requests:
+            for request in taxpayer_requests:
                 if request.id not in selected_ids:
                     requests_to_process |= request
                     selected_ids.add(request.id)
         return requests_to_process
 
     @api.model
-    def _refresh_pending_companies(self, pending_companies):
-        """Keep companies in the pending list while they still have work."""
+    def _refresh_pending_taxpayers(self, pending_taxpayers):
+        """Keep taxpayers in the pending list while they still have work."""
         still_pending = []
-        for company in pending_companies:
+        for taxpayer in pending_taxpayers:
             active_count = self.search_count(
                 [
-                    ("company_id", "=", company.id),
+                    ("taxpayer_id", "=", taxpayer.id),
                     ("state", "in", _ACTIVE_REQUEST_STATES),
                 ]
             )
             if active_count:
-                still_pending.append(company.id)
+                still_pending.append(taxpayer.id)
                 continue
-            if not (
-                company.l10n_mx_sat_auto_download
-                and company.l10n_mx_sat_has_credentials()
-            ):
+            if not (taxpayer.auto_download and taxpayer._has_credentials()):
                 continue
             before = active_count
-            self._ensure_scheduled_requests(company)
+            self._ensure_scheduled_requests(taxpayer)
             after = self.search_count(
                 [
-                    ("company_id", "=", company.id),
+                    ("taxpayer_id", "=", taxpayer.id),
                     ("state", "in", _ACTIVE_REQUEST_STATES),
                 ]
             )
             if after > before:
-                still_pending.append(company.id)
+                still_pending.append(taxpayer.id)
         self._write_param_ids(_SYNC_PENDING_PARAM, still_pending)
         return still_pending
 
     @api.model
-    def _cron_process_requests(self, companies=None):
+    def _cron_process_requests(self, taxpayers=None):
         """Main cron entry point: queue-backed, one request per invocation."""
-        if companies is not None:
-            self._mark_company_sync_pending(companies)
+        if taxpayers is not None:
+            self._mark_taxpayer_sync_pending(taxpayers)
         else:
-            auto_companies = self.env["res.company"].search(
-                [
-                    ("l10n_mx_sat_auto_download", "=", True),
-                    ("l10n_mx_sat_fiel_cer", "!=", False),
-                    ("l10n_mx_sat_fiel_key", "!=", False),
-                    ("l10n_mx_sat_fiel_password", "!=", False),
-                ]
+            # FIEL fields are restricted to base.group_system: search as sudo
+            # so the cron can filter on them regardless of the executing user.
+            auto_taxpayers = (
+                self.env["l10n_mx_sat.taxpayer"]
+                .sudo()
+                .search(
+                    [
+                        ("auto_download", "=", True),
+                        ("fiel_cer", "!=", False),
+                        ("fiel_key", "!=", False),
+                        ("fiel_password", "!=", False),
+                    ]
+                )
             )
-            self._mark_company_sync_pending(auto_companies)
+            self._mark_taxpayer_sync_pending(auto_taxpayers)
 
-        pending_company_ids = self._parse_param_ids(_SYNC_PENDING_PARAM)
-        pending_companies = self.env["res.company"].browse(pending_company_ids).exists()
+        pending_taxpayer_ids = self._parse_param_ids(_SYNC_PENDING_PARAM)
+        pending_taxpayers = (
+            self.env["l10n_mx_sat.taxpayer"].browse(pending_taxpayer_ids).exists()
+        )
 
-        for company in pending_companies:
-            if company.l10n_mx_sat_has_credentials():
-                self._ensure_scheduled_requests(company)
+        for taxpayer in pending_taxpayers:
+            if taxpayer._has_credentials():
+                self._ensure_scheduled_requests(taxpayer)
 
-        requests_to_process = self._collect_pending_work(pending_companies)
+        requests_to_process = self._collect_pending_work(pending_taxpayers)
         batch_size = (
             len(requests_to_process) if not _CRON_BATCH_SIZE else _CRON_BATCH_SIZE
         )
@@ -1019,23 +1028,23 @@ class L10nMxSatDownloadRequest(models.Model):
         self._remove_param_ids(_QUEUED_REQUESTS_PARAM, batch.ids)
 
         for request in successful_requests:
-            company = request.company_id
-            if company.l10n_mx_sat_auto_download:
-                self._ensure_scheduled_requests(company, after_success=True)
+            taxpayer = request.taxpayer_id
+            if taxpayer.auto_download:
+                self._ensure_scheduled_requests(taxpayer, after_success=True)
 
-        still_pending = self._refresh_pending_companies(pending_companies)
+        still_pending = self._refresh_pending_taxpayers(pending_taxpayers)
         self._cron_schedule_follow_up(still_pending)
 
     @api.model
-    def _ensure_scheduled_requests(self, company, after_success=False):
-        """Create missing XML download requests for enabled company flows."""
-        flows = company.l10n_mx_sat_get_xml_download_flows()
+    def _ensure_scheduled_requests(self, taxpayer, after_success=False):
+        """Create missing XML download requests for enabled taxpayer flows."""
+        flows = taxpayer._get_xml_download_flows()
         if not flows:
             return
         for document_kind, direction, request_type in flows:
             pending = self.search_count(
                 [
-                    ("company_id", "=", company.id),
+                    ("taxpayer_id", "=", taxpayer.id),
                     ("document_kind", "=", document_kind),
                     ("direction", "=", direction),
                     ("request_type", "=", request_type),
@@ -1046,7 +1055,7 @@ class L10nMxSatDownloadRequest(models.Model):
                 continue
             last_error = self.search(
                 [
-                    ("company_id", "=", company.id),
+                    ("taxpayer_id", "=", taxpayer.id),
                     ("document_kind", "=", document_kind),
                     ("direction", "=", direction),
                     ("request_type", "=", request_type),
@@ -1060,21 +1069,21 @@ class L10nMxSatDownloadRequest(models.Model):
             ):
                 continue
             req = self._create_next_request(
-                company, document_kind, direction, request_type
+                taxpayer, document_kind, direction, request_type
             )
             if req and after_success:
                 _logger.info(
-                    "Chained SAT request %s for company %s",
+                    "Chained SAT request %s for taxpayer %s",
                     req.name,
-                    company.name,
+                    taxpayer.name,
                 )
 
     @api.model
-    def _create_next_request(self, company, document_kind, direction, request_type):
+    def _create_next_request(self, taxpayer, document_kind, direction, request_type):
         """Create incremental request for the next date window."""
         last_done = self.search(
             [
-                ("company_id", "=", company.id),
+                ("taxpayer_id", "=", taxpayer.id),
                 ("document_kind", "=", document_kind),
                 ("direction", "=", direction),
                 ("request_type", "=", request_type),
@@ -1084,7 +1093,7 @@ class L10nMxSatDownloadRequest(models.Model):
             limit=1,
         )
 
-        sync_from = self._get_sync_from_date(company, request_type)
+        sync_from = self._get_sync_from_date(taxpayer, request_type)
         if last_done:
             date_from = last_done.date_to + timedelta(seconds=1)
         elif sync_from:
@@ -1117,7 +1126,7 @@ class L10nMxSatDownloadRequest(models.Model):
             return self.browse()
 
         fingerprint = build_request_fingerprint(
-            company.id,
+            taxpayer.id,
             document_kind,
             direction,
             request_type,
@@ -1129,7 +1138,7 @@ class L10nMxSatDownloadRequest(models.Model):
 
         return self.create(
             {
-                "company_id": company.id,
+                "taxpayer_id": taxpayer.id,
                 "document_kind": document_kind,
                 "direction": direction,
                 "request_type": request_type,
@@ -1141,12 +1150,10 @@ class L10nMxSatDownloadRequest(models.Model):
         )
 
     @api.model
-    def _get_sync_from_date(self, company, request_type):
+    def _get_sync_from_date(self, taxpayer, request_type):
         if request_type == "metadata":
-            return (
-                company.l10n_mx_sat_metadata_sync_from or company.l10n_mx_sat_sync_from
-            )
-        return company.l10n_mx_sat_sync_from
+            return taxpayer.metadata_sync_from or taxpayer.sync_from
+        return taxpayer.sync_from
 
 
 class L10nMxSatDownloadPackage(models.Model):
@@ -1158,6 +1165,11 @@ class L10nMxSatDownloadPackage(models.Model):
         string="SAT request",
         required=True,
         ondelete="cascade",
+    )
+    taxpayer_id = fields.Many2one(
+        related="request_id.taxpayer_id",
+        store=True,
+        index=True,
     )
     company_id = fields.Many2one(
         related="request_id.company_id",

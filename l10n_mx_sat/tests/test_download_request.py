@@ -36,7 +36,7 @@ from odoo.addons.l10n_mx_sat.services.sat_metadata import (
 )
 
 _PATCH_GET_CLIENT = (
-    "odoo.addons.l10n_mx_sat.models.res_company.ResCompany.l10n_mx_sat_get_client"
+    "odoo.addons.l10n_mx_sat.models.l10n_mx_sat_taxpayer.L10nMxSatTaxpayer._get_client"
 )
 _SVC = "odoo.addons.l10n_mx_sat.services.sat_client"
 _DEFAULT_CFDI_UUID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
@@ -91,10 +91,10 @@ class TestSatMetadata(TransactionCase):
         fp1 = build_request_fingerprint(1, "cfdi", "received", "metadata", fi, ff)
         fp2 = build_request_fingerprint(1, "cfdi", "received", "metadata", fi, ff)
         self.assertEqual(fp1, fp2)
-        fp_other_company = build_request_fingerprint(
+        fp_other_taxpayer = build_request_fingerprint(
             2, "cfdi", "received", "metadata", fi, ff
         )
-        self.assertNotEqual(fp1, fp_other_company)
+        self.assertNotEqual(fp1, fp_other_taxpayer)
         fp_none_dates = build_request_fingerprint(
             1, "cfdi", "received", "metadata", None, None
         )
@@ -108,13 +108,15 @@ class TestDownloadRequest(TransactionCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.company = cls.env.ref("base.main_company")
-        cls.company.write(
+        cls.company.write({"country_id": cls.env.ref("base.mx").id})
+        cls.taxpayer = cls.env["l10n_mx_sat.taxpayer"].create(
             {
-                "vat": "EKU9003173C9",
-                "country_id": cls.env.ref("base.mx").id,
-                "l10n_mx_sat_fiel_cer": b"ZmFrZQ==",
-                "l10n_mx_sat_fiel_key": b"ZmFrZQ==",
-                "l10n_mx_sat_fiel_password": "test",
+                "name": "Razon Social Uno",
+                "company_id": cls.company.id,
+                "rfc": "EKU9003173C9",
+                "fiel_cer": b"ZmFrZQ==",
+                "fiel_key": b"ZmFrZQ==",
+                "fiel_password": "test",
             }
         )
         cls.env.user.group_ids |= cls.env.ref("l10n_mx_sat.group_sat_manager")
@@ -122,12 +124,12 @@ class TestDownloadRequest(TransactionCase):
     def setUp(self):
         super().setUp()
         icp = self.env["ir.config_parameter"].sudo()
-        icp.set_param("l10n_mx_sat.sync_pending_company_ids", "")
+        icp.set_param("l10n_mx_sat.sync_pending_taxpayer_ids", "")
         icp.set_param("l10n_mx_sat.queued_request_ids", "")
 
     def _create_request(self, **kwargs):
         vals = {
-            "company_id": self.company.id,
+            "taxpayer_id": self.taxpayer.id,
             "document_kind": "cfdi",
             "direction": "received",
             "request_type": "xml",
@@ -141,7 +143,7 @@ class TestDownloadRequest(TransactionCase):
     def _mock_client(self, **overrides):
         client = MagicMock()
         client.authenticate.return_value = "fake-token"
-        client.rfc = self.company.vat
+        client.rfc = self.taxpayer.rfc
         for attr, val in overrides.items():
             setattr(client, attr, val)
         return client
@@ -232,7 +234,7 @@ class TestDownloadRequest(TransactionCase):
         mid = req.date_to
         second = self.env["l10n_mx_sat.download.request"].search(
             [
-                ("company_id", "=", self.company.id),
+                ("taxpayer_id", "=", self.taxpayer.id),
                 ("date_from", "=", mid + timedelta(seconds=1)),
                 ("date_to", "=", original_date_to),
             ]
@@ -260,12 +262,12 @@ class TestDownloadRequest(TransactionCase):
             "total": "150.00",
         }
         doc = self.env["l10n_mx_sat.document"]._upsert_from_metadata_row(
-            row, self.company, request
+            row, self.taxpayer, request
         )
         self.assertEqual(doc.sat_status, "cancelled")
         row["sat_status"] = "in_progress"
         doc2 = self.env["l10n_mx_sat.document"]._upsert_from_metadata_row(
-            row, self.company, request
+            row, self.taxpayer, request
         )
         self.assertEqual(doc2.id, doc.id)
         self.assertEqual(doc2.sat_status, "in_progress")
@@ -278,7 +280,7 @@ class TestDownloadRequest(TransactionCase):
             "total": "100.00",
         }
         doc = self.env["l10n_mx_sat.document"]._upsert_from_metadata_row(
-            row, self.company, request
+            row, self.taxpayer, request
         )
         with self.assertRaises(AccessError):
             doc.write({"total": 999.99})
@@ -290,7 +292,7 @@ class TestDownloadRequest(TransactionCase):
                 "uuid": "55555555-6666-7777-8888-999999999999",
                 "sat_status": "valid",
             },
-            self.company,
+            self.taxpayer,
             request,
         )
         with self.assertRaises(AccessError):
@@ -303,7 +305,7 @@ class TestDownloadRequest(TransactionCase):
         with self.assertRaises(AccessError):
             Document.create(
                 {
-                    "company_id": self.company.id,
+                    "taxpayer_id": self.taxpayer.id,
                     "uuid": "33333333-4444-5555-6666-777777777777",
                     "document_kind": "cfdi",
                     "direction": "received",
@@ -317,7 +319,7 @@ class TestDownloadRequest(TransactionCase):
                 "uuid": "44444444-5555-6666-7777-888888888888",
                 "sat_status": "valid",
             },
-            self.company,
+            self.taxpayer,
             request,
         )
         action = doc.get_formview_action()
@@ -326,16 +328,16 @@ class TestDownloadRequest(TransactionCase):
 
     def test_create_next_request_respects_metadata_window(self):
         self.env["l10n_mx_sat.download.request"].search(
-            [("company_id", "=", self.company.id)]
+            [("taxpayer_id", "=", self.taxpayer.id)]
         ).unlink()
-        self.company.write(
+        self.taxpayer.write(
             {
-                "l10n_mx_sat_metadata_sync_from": "2025-01-01",
-                "l10n_mx_sat_sync_from": False,
+                "metadata_sync_from": "2025-01-01",
+                "sync_from": False,
             }
         )
         req = self.env["l10n_mx_sat.download.request"]._create_next_request(
-            self.company, "cfdi", "received", "metadata"
+            self.taxpayer, "cfdi", "received", "metadata"
         )
         self.assertTrue(req)
         delta = req.date_to - req.date_from
@@ -345,7 +347,7 @@ class TestDownloadRequest(TransactionCase):
     def test_manual_sync_creates_requests(self):
         """Manual sync must create and chain XML requests for enabled flows."""
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
 
         client = self._mock_client()
         client.request_download.return_value = {
@@ -357,27 +359,27 @@ class TestDownloadRequest(TransactionCase):
             Request.with_context(
                 l10n_mx_sat_manual_sync=True,
                 test_queue_job_no_delay=True,
-            )._cron_process_requests(companies=self.company)
+            )._cron_process_requests(taxpayers=self.taxpayer)
 
-        requests = Request.search([("company_id", "=", self.company.id)])
+        requests = Request.search([("taxpayer_id", "=", self.taxpayer.id)])
         self.assertEqual(len(requests), 8)
         self.assertTrue(all(req.request_type == "xml" for req in requests))
         self.assertEqual(
             Request.search_count(
-                [("company_id", "=", self.company.id), ("request_type", "=", "xml")]
+                [("taxpayer_id", "=", self.taxpayer.id), ("request_type", "=", "xml")]
             ),
             8,
         )
 
     def test_manual_sync_respects_download_flags(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
-        self.company.write(
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.write(
             {
-                "l10n_mx_sat_download_cfdi_issued": True,
-                "l10n_mx_sat_download_cfdi_received": False,
-                "l10n_mx_sat_download_retention_issued": False,
-                "l10n_mx_sat_download_retention_received": False,
+                "download_cfdi_issued": True,
+                "download_cfdi_received": False,
+                "download_retention_issued": False,
+                "download_retention_received": False,
             }
         )
 
@@ -391,9 +393,9 @@ class TestDownloadRequest(TransactionCase):
             Request.with_context(
                 l10n_mx_sat_manual_sync=True,
                 test_queue_job_no_delay=True,
-            )._cron_process_requests(companies=self.company)
+            )._cron_process_requests(taxpayers=self.taxpayer)
 
-        requests = Request.search([("company_id", "=", self.company.id)])
+        requests = Request.search([("taxpayer_id", "=", self.taxpayer.id)])
         self.assertEqual(len(requests), 2)
         self.assertEqual(set(requests.mapped("document_kind")), {"cfdi"})
         self.assertEqual(set(requests.mapped("direction")), {"issued"})
@@ -401,28 +403,28 @@ class TestDownloadRequest(TransactionCase):
 
     def test_manual_sync_with_all_flags_disabled_creates_nothing(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
-        self.company.write(
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.write(
             {
-                "l10n_mx_sat_download_cfdi_issued": False,
-                "l10n_mx_sat_download_cfdi_received": False,
-                "l10n_mx_sat_download_retention_issued": False,
-                "l10n_mx_sat_download_retention_received": False,
+                "download_cfdi_issued": False,
+                "download_cfdi_received": False,
+                "download_retention_issued": False,
+                "download_retention_received": False,
             }
         )
 
         Request.with_context(
             l10n_mx_sat_manual_sync=True,
             test_queue_job_no_delay=True,
-        )._cron_process_requests(companies=self.company)
+        )._cron_process_requests(taxpayers=self.taxpayer)
 
         self.assertEqual(
-            Request.search_count([("company_id", "=", self.company.id)]),
+            Request.search_count([("taxpayer_id", "=", self.taxpayer.id)]),
             0,
         )
 
-    def test_action_request_issued_uses_fiel_rfc_without_vat(self):
-        self.company.vat = False
+    def test_action_request_issued_uses_fiel_rfc_without_rfc(self):
+        self.taxpayer.rfc = False
         client = self._mock_client()
         client.rfc = "RFCFIEL123"
         client.request_download.return_value = {
@@ -437,14 +439,14 @@ class TestDownloadRequest(TransactionCase):
         self.assertEqual(client.request_download.call_args.args[1], "RFCFIEL123")
         self.assertEqual(req.state, "requested")
 
-    def test_get_display_rfc_uses_fiel_when_vat_missing(self):
-        self.company.write({"vat": False})
+    def test_get_display_rfc_uses_fiel_when_rfc_missing(self):
+        self.taxpayer.write({"rfc": False})
         self.env.invalidate_all()
         client = self._mock_client()
         client.rfc = "RFCFIEL123"
         Request = self.env["l10n_mx_sat.download.request"]
         with self._patch_factory(client):
-            rfc = Request._get_display_rfc(self.company)
+            rfc = Request._get_display_rfc(self.taxpayer)
         self.assertEqual(rfc, "RFCFIEL123")
 
     def test_action_verify_no_info_rejected_5004(self):
@@ -508,7 +510,7 @@ class TestDownloadRequest(TransactionCase):
         }
         req = self._create_request(state="error", error_message="Fallo inicial")
         count_before = self.env["l10n_mx_sat.download.request"].search_count(
-            [("company_id", "=", self.company.id)]
+            [("taxpayer_id", "=", self.taxpayer.id)]
         )
         with self._patch_factory(client):
             req.action_retry()
@@ -516,7 +518,7 @@ class TestDownloadRequest(TransactionCase):
         self.assertFalse(req.error_message)
         self.assertEqual(
             self.env["l10n_mx_sat.download.request"].search_count(
-                [("company_id", "=", self.company.id)]
+                [("taxpayer_id", "=", self.taxpayer.id)]
             ),
             count_before,
         )
@@ -550,7 +552,7 @@ class TestDownloadRequest(TransactionCase):
             },
         )()
         mock_sat_cls.return_value = legacy_sat
-        mock_signer_load.return_value.rfc = self.company.vat
+        mock_signer_load.return_value.rfc = self.taxpayer.rfc
         req = self._create_request(
             document_kind="retention",
             direction="issued",
@@ -586,7 +588,7 @@ class TestDownloadRequest(TransactionCase):
             },
         )()
         mock_sat_cls.return_value = legacy_sat
-        mock_signer_load.return_value.rfc = self.company.vat
+        mock_signer_load.return_value.rfc = self.taxpayer.rfc
         req = self._create_request(
             document_kind="retention",
             direction="received",
@@ -792,14 +794,14 @@ class TestDownloadRequest(TransactionCase):
         }
         req = self._create_request(state="ready", sat_request_id="SOL-DL")
         self._create_package(req)
-        self.company.l10n_mx_sat_last_sync = False
+        self.taxpayer.last_sync = False
         with self._patch_factory(client):
             req._action_download()
         self.assertEqual(req.state, "done")
         self.assertEqual(req.document_count, 1)
-        self.assertTrue(self.company.l10n_mx_sat_last_sync)
+        self.assertTrue(self.taxpayer.last_sync)
         doc = self.env["l10n_mx_sat.document"].search(
-            [("uuid", "=", uuid), ("company_id", "=", self.company.id)]
+            [("uuid", "=", uuid), ("taxpayer_id", "=", self.taxpayer.id)]
         )
         self.assertTrue(doc.has_xml)
         self.assertTrue(doc.attachment_id)
@@ -819,12 +821,12 @@ class TestDownloadRequest(TransactionCase):
             request_type="metadata", state="ready", sat_request_id="SOL-META"
         )
         self._create_package(req)
-        self.company.l10n_mx_sat_last_metadata_sync = False
+        self.taxpayer.last_metadata_sync = False
         with self._patch_factory(client):
             req._action_download()
         self.assertEqual(req.state, "done")
         self.assertEqual(req.document_count, 1)
-        self.assertTrue(self.company.l10n_mx_sat_last_metadata_sync)
+        self.assertTrue(self.taxpayer.last_metadata_sync)
 
     def test_action_download_skips_unsupported_and_invalid_files(self):
         package_b64 = self._build_zip_b64(
@@ -881,7 +883,7 @@ class TestDownloadRequest(TransactionCase):
             "_ZIP_MAX_FILES",
             0,
         ):
-            result = req._process_package(package_b64, self.company)
+            result = req._process_package(package_b64, self.taxpayer)
         self.assertEqual(result["processed"], 0)
 
     def test_get_retry_target_state_with_error_packages(self):
@@ -959,7 +961,7 @@ class TestDownloadRequest(TransactionCase):
             date_to="2026-04-15 23:59:59",
         )
         Request._write_param_ids("l10n_mx_sat.queued_request_ids", [req2.id, 999999])
-        work = Request._collect_pending_work(self.company)
+        work = Request._collect_pending_work(self.taxpayer)
         self.assertEqual(work.ids[0], req2.id)
         self.assertIn(req1.id, work.ids)
 
@@ -970,7 +972,7 @@ class TestDownloadRequest(TransactionCase):
         Request._write_param_ids("l10n_mx_sat.queued_request_ids", [req.id])
         self.assertTrue(Request._cron_has_immediate_work([]))
         Request._write_param_ids("l10n_mx_sat.queued_request_ids", [])
-        self.assertTrue(Request._cron_has_immediate_work([self.company.id]))
+        self.assertTrue(Request._cron_has_immediate_work([self.taxpayer.id]))
         req.write(
             {
                 "state": "processing",
@@ -978,24 +980,24 @@ class TestDownloadRequest(TransactionCase):
                 "next_process_at": fields.Datetime.now() + timedelta(hours=1),
             }
         )
-        self.assertFalse(Request._cron_has_immediate_work([self.company.id]))
+        self.assertFalse(Request._cron_has_immediate_work([self.taxpayer.id]))
 
-    def test_refresh_pending_companies_keeps_active(self):
+    def test_refresh_pending_taxpayers_keeps_active(self):
         Request = self.env["l10n_mx_sat.download.request"]
         self._create_request()
-        still = Request._refresh_pending_companies(self.company)
-        self.assertIn(self.company.id, still)
+        still = Request._refresh_pending_taxpayers(self.taxpayer)
+        self.assertIn(self.taxpayer.id, still)
 
     def test_refresh_pending_skips_when_auto_download_disabled(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
-        self.company.l10n_mx_sat_auto_download = False
-        still = Request._refresh_pending_companies(self.company)
-        self.assertNotIn(self.company.id, still)
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.auto_download = False
+        still = Request._refresh_pending_taxpayers(self.taxpayer)
+        self.assertNotIn(self.taxpayer.id, still)
 
     def test_cron_process_requests_batch_size_one(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
         self._create_request(
             date_from="2026-05-01 00:00:00",
             date_to="2026-05-15 23:59:59",
@@ -1022,23 +1024,23 @@ class TestDownloadRequest(TransactionCase):
             self._patch_factory(client),
             patch.object(type(Request), "_cron_trigger") as mock_trigger,
         ):
-            Request._cron_process_requests(companies=self.company)
+            Request._cron_process_requests(taxpayers=self.taxpayer)
         processed = Request.search(
-            [("company_id", "=", self.company.id), ("state", "!=", "draft")]
+            [("taxpayer_id", "=", self.taxpayer.id), ("state", "!=", "draft")]
         )
         self.assertEqual(len(processed), 4)
         mock_trigger.assert_called_once_with()
 
     def test_cron_processing_defers_trigger(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
-        self.company.write(
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.write(
             {
-                "l10n_mx_sat_download_cfdi_issued": False,
-                "l10n_mx_sat_download_cfdi_received": True,
-                "l10n_mx_sat_download_retention_issued": False,
-                "l10n_mx_sat_download_retention_received": False,
-                "l10n_mx_sat_auto_download": False,
+                "download_cfdi_issued": False,
+                "download_cfdi_received": True,
+                "download_retention_issued": False,
+                "download_retention_received": False,
+                "auto_download": False,
             }
         )
         deferred_at = fields.Datetime.now() + timedelta(hours=1)
@@ -1047,20 +1049,20 @@ class TestDownloadRequest(TransactionCase):
             sat_request_id="SOL-DEFER",
             next_process_at=deferred_at,
         )
-        Request._mark_company_sync_pending(self.company)
+        Request._mark_taxpayer_sync_pending(self.taxpayer)
         with patch.object(type(Request), "_cron_trigger") as mock_trigger:
-            Request._cron_process_requests(companies=self.company)
+            Request._cron_process_requests(taxpayers=self.taxpayer)
         mock_trigger.assert_called_once_with(at=deferred_at)
 
     def test_cron_draft_remaining_defers_when_waiting(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
-        self.company.write(
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.write(
             {
-                "l10n_mx_sat_download_cfdi_issued": False,
-                "l10n_mx_sat_download_cfdi_received": True,
-                "l10n_mx_sat_download_retention_issued": False,
-                "l10n_mx_sat_download_retention_received": False,
+                "download_cfdi_issued": False,
+                "download_cfdi_received": True,
+                "download_retention_issued": False,
+                "download_retention_received": False,
             }
         )
         deferred_at = fields.Datetime.now() + timedelta(hours=1)
@@ -1097,7 +1099,7 @@ class TestDownloadRequest(TransactionCase):
             self._patch_factory(client),
             patch.object(type(Request), "_cron_trigger") as mock_trigger,
         ):
-            Request._cron_process_requests(companies=self.company)
+            Request._cron_process_requests(taxpayers=self.taxpayer)
         call_kwargs = mock_trigger.call_args.kwargs
         self.assertIn("at", call_kwargs)
         self.assertGreaterEqual(call_kwargs["at"], deferred_at)
@@ -1109,7 +1111,7 @@ class TestDownloadRequest(TransactionCase):
         client = self._mock_client()
         client.authenticate.side_effect = Exception("Auth failed")
         with self._patch_factory(client), patch.object(type(Request), "_cron_trigger"):
-            Request._cron_process_requests(companies=self.company)
+            Request._cron_process_requests(taxpayers=self.taxpayer)
         self.assertEqual(req.state, "error")
         self.assertIn("Auth failed", req.error_message)
 
@@ -1121,11 +1123,11 @@ class TestDownloadRequest(TransactionCase):
             "message": "No info",
         }
         req = self._create_request()
-        self.company.l10n_mx_sat_last_sync = False
+        self.taxpayer.last_sync = False
         with self._patch_factory(client):
             req._action_request()
         self.assertEqual(req.state, "done")
-        self.assertTrue(self.company.l10n_mx_sat_last_sync)
+        self.assertTrue(self.taxpayer.last_sync)
 
     def test_action_request_reject_code(self):
         client = self._mock_client()
@@ -1173,7 +1175,7 @@ class TestDownloadRequest(TransactionCase):
         Request = self.env["l10n_mx_sat.download.request"]
         fp = Request._build_fingerprint_from_vals(
             {
-                "company_id": self.company.id,
+                "taxpayer_id": self.taxpayer.id,
                 "document_kind": "cfdi",
                 "direction": "received",
                 "request_type": "xml",
@@ -1201,20 +1203,20 @@ class TestDownloadRequest(TransactionCase):
 
     def test_get_sync_from_date_metadata_fallback(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        self.company.write(
+        self.taxpayer.write(
             {
-                "l10n_mx_sat_sync_from": "2025-01-01",
-                "l10n_mx_sat_metadata_sync_from": False,
+                "sync_from": "2025-01-01",
+                "metadata_sync_from": False,
             }
         )
-        sync_from = Request._get_sync_from_date(self.company, "metadata")
+        sync_from = Request._get_sync_from_date(self.taxpayer, "metadata")
         self.assertEqual(str(sync_from), "2025-01-01")
 
-    def test_mark_company_sync_pending_empty(self):
+    def test_mark_taxpayer_sync_pending_empty(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request._mark_company_sync_pending(self.env["res.company"].browse())
+        Request._mark_taxpayer_sync_pending(self.env["l10n_mx_sat.taxpayer"].browse())
         self.assertEqual(
-            Request._parse_param_ids("l10n_mx_sat.sync_pending_company_ids"),
+            Request._parse_param_ids("l10n_mx_sat.sync_pending_taxpayer_ids"),
             [],
         )
 
@@ -1259,7 +1261,7 @@ class TestDownloadRequest(TransactionCase):
         mid = req.date_to
         second = self.env["l10n_mx_sat.download.request"].search(
             [
-                ("company_id", "=", self.company.id),
+                ("taxpayer_id", "=", self.taxpayer.id),
                 ("date_from", "=", mid + timedelta(seconds=1)),
                 ("date_to", "=", original_date_to),
             ]
@@ -1290,12 +1292,12 @@ class TestDownloadRequest(TransactionCase):
             state="draft",
         )
         before = self.env["l10n_mx_sat.download.request"].search_count(
-            [("company_id", "=", self.company.id)]
+            [("taxpayer_id", "=", self.taxpayer.id)]
         )
         with self._patch_factory(client):
             req._action_verify()
         after = self.env["l10n_mx_sat.download.request"].search_count(
-            [("company_id", "=", self.company.id)]
+            [("taxpayer_id", "=", self.taxpayer.id)]
         )
         self.assertEqual(req.state, "draft")
         self.assertEqual(after, before)
@@ -1393,13 +1395,13 @@ class TestDownloadRequest(TransactionCase):
 
     def test_ensure_scheduled_skips_last_error_5002(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
-        self.company.write(
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.write(
             {
-                "l10n_mx_sat_download_cfdi_issued": False,
-                "l10n_mx_sat_download_cfdi_received": True,
-                "l10n_mx_sat_download_retention_issued": False,
-                "l10n_mx_sat_download_retention_received": False,
+                "download_cfdi_issued": False,
+                "download_cfdi_received": True,
+                "download_retention_issued": False,
+                "download_retention_received": False,
             }
         )
         self._create_request(
@@ -1408,10 +1410,10 @@ class TestDownloadRequest(TransactionCase):
             date_from="2026-06-01 00:00:00",
             date_to="2026-06-15 23:59:59",
         )
-        Request._ensure_scheduled_requests(self.company)
+        Request._ensure_scheduled_requests(self.taxpayer)
         drafts = Request.search(
             [
-                ("company_id", "=", self.company.id),
+                ("taxpayer_id", "=", self.taxpayer.id),
                 ("state", "=", "draft"),
                 ("document_kind", "=", "cfdi"),
                 ("direction", "=", "received"),
@@ -1429,18 +1431,19 @@ class TestDownloadRequest(TransactionCase):
             date_from=yesterday_eod - timedelta(days=7),
             date_to=yesterday_eod,
         )
-        nxt = Request._create_next_request(self.company, "cfdi", "received", "xml")
+        nxt = Request._create_next_request(self.taxpayer, "cfdi", "received", "xml")
         self.assertFalse(nxt)
 
     def test_get_display_rfc_exception_falls_back_to_name(self):
-        self.company.write({"vat": False, "name": "Fallback Co"})
+        self.taxpayer.write({"rfc": False, "name": "Fallback Co"})
         self.env.invalidate_all()
         Request = self.env["l10n_mx_sat.download.request"]
         with patch(
-            "odoo.addons.l10n_mx_sat.models.res_company.ResCompany.l10n_mx_sat_get_rfc",
+            "odoo.addons.l10n_mx_sat.models.l10n_mx_sat_taxpayer."
+            "L10nMxSatTaxpayer._get_rfc",
             side_effect=UserError("no rfc"),
         ):
-            rfc = Request._get_display_rfc(self.company)
+            rfc = Request._get_display_rfc(self.taxpayer)
         self.assertEqual(rfc, "Fallback Co")
 
     def test_action_retry_success_notification(self):
@@ -1524,21 +1527,21 @@ class TestDownloadRequest(TransactionCase):
             "search",
             side_effect=[fake_done, Request.browse([1])],
         ):
-            nxt = Request._create_next_request(self.company, "cfdi", "received", "xml")
+            nxt = Request._create_next_request(self.taxpayer, "cfdi", "received", "xml")
         self.assertFalse(nxt)
 
     def test_get_display_rfc_falls_back_to_question_mark(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        company = self.company.new(
+        taxpayer = self.taxpayer.new(
             {
-                "vat": False,
+                "rfc": False,
                 "name": False,
-                "l10n_mx_sat_fiel_cer": False,
-                "l10n_mx_sat_fiel_key": False,
-                "l10n_mx_sat_fiel_password": False,
+                "fiel_cer": False,
+                "fiel_key": False,
+                "fiel_password": False,
             }
         )
-        self.assertEqual(Request._get_display_rfc(company), "?")
+        self.assertEqual(Request._get_display_rfc(taxpayer), "?")
 
     def test_action_request_unknown_response_writes_error(self):
         client = self._mock_client()
@@ -1605,23 +1608,23 @@ class TestDownloadRequest(TransactionCase):
 
     def test_refresh_pending_schedules_when_idle_with_auto_download(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
-        self.company.write(
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.write(
             {
-                "l10n_mx_sat_auto_download": True,
-                "l10n_mx_sat_download_cfdi_issued": False,
-                "l10n_mx_sat_download_cfdi_received": True,
-                "l10n_mx_sat_download_retention_issued": False,
-                "l10n_mx_sat_download_retention_received": False,
-                "l10n_mx_sat_sync_from": "2026-01-01",
+                "auto_download": True,
+                "download_cfdi_issued": False,
+                "download_cfdi_received": True,
+                "download_retention_issued": False,
+                "download_retention_received": False,
+                "sync_from": "2026-01-01",
             }
         )
-        still = Request._refresh_pending_companies(self.company)
-        self.assertIn(self.company.id, still)
+        still = Request._refresh_pending_taxpayers(self.taxpayer)
+        self.assertIn(self.taxpayer.id, still)
         self.assertTrue(
             Request.search(
                 [
-                    ("company_id", "=", self.company.id),
+                    ("taxpayer_id", "=", self.taxpayer.id),
                     ("state", "=", "draft"),
                     ("direction", "=", "received"),
                 ]
@@ -1630,15 +1633,15 @@ class TestDownloadRequest(TransactionCase):
 
     def test_cron_process_requests_without_companies_arg(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
-        self.company.write(
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.write(
             {
-                "l10n_mx_sat_auto_download": True,
-                "l10n_mx_sat_download_cfdi_issued": False,
-                "l10n_mx_sat_download_cfdi_received": True,
-                "l10n_mx_sat_download_retention_issued": False,
-                "l10n_mx_sat_download_retention_received": False,
-                "l10n_mx_sat_sync_from": "2026-01-10",
+                "auto_download": True,
+                "download_cfdi_issued": False,
+                "download_cfdi_received": True,
+                "download_retention_issued": False,
+                "download_retention_received": False,
+                "sync_from": "2026-01-10",
             }
         )
         client = self._mock_client()
@@ -1662,15 +1665,15 @@ class TestDownloadRequest(TransactionCase):
             Request._cron_process_requests()
         self.assertTrue(
             Request.search(
-                [("company_id", "=", self.company.id), ("state", "!=", "draft")]
+                [("taxpayer_id", "=", self.taxpayer.id), ("state", "!=", "draft")]
             )
         )
 
     def test_create_next_request_uses_sync_from_without_last_done(self):
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
-        self.company.write({"l10n_mx_sat_sync_from": "2026-02-01"})
-        req = Request._create_next_request(self.company, "cfdi", "received", "xml")
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.write({"sync_from": "2026-02-01"})
+        req = Request._create_next_request(self.taxpayer, "cfdi", "received", "xml")
         self.assertTrue(req)
         self.assertEqual(req.date_from.date().isoformat(), "2026-02-01")
 
@@ -1678,7 +1681,7 @@ class TestDownloadRequest(TransactionCase):
         from datetime import timezone
 
         Request = self.env["l10n_mx_sat.download.request"]
-        Request.search([("company_id", "=", self.company.id)]).unlink()
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
         aware = datetime(2026, 3, 1, 0, 0, 0, tzinfo=timezone.utc)
         empty = Request.browse()
         fake_done = MagicMock()
@@ -1688,42 +1691,47 @@ class TestDownloadRequest(TransactionCase):
             "search",
             side_effect=[fake_done, empty, empty, empty],
         ):
-            req = Request._create_next_request(self.company, "cfdi", "received", "xml")
+            req = Request._create_next_request(self.taxpayer, "cfdi", "received", "xml")
         self.assertTrue(req)
         self.assertIsNone(req.date_from.tzinfo)
 
 
 @tagged("post_install", "-at_install")
-class TestMultiCompanySAT(TransactionCase):
+class TestMultiTaxpayerSAT(TransactionCase):
+    """Several taxpayers (razones sociales) inside a single Odoo company."""
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.env.user.group_ids |= cls.env.ref("l10n_mx_sat.group_sat_manager")
-        cls.company_a = cls.env.ref("base.main_company")
-        cls.company_a.write(
+        cls.company = cls.env.ref("base.main_company")
+        cls.company.write({"country_id": cls.env.ref("base.mx").id})
+        Taxpayer = cls.env["l10n_mx_sat.taxpayer"]
+        cls.taxpayer_a = Taxpayer.create(
             {
-                "vat": "EKU9003173C9",
-                "country_id": cls.env.ref("base.mx").id,
-                "l10n_mx_sat_fiel_cer": b"ZmFrZQ==",
-                "l10n_mx_sat_fiel_key": b"ZmFrZQ==",
-                "l10n_mx_sat_fiel_password": "test-a",
+                "name": "Razon Social A",
+                "company_id": cls.company.id,
+                "rfc": "EKU9003173C9",
+                "fiel_cer": b"ZmFrZQ==",
+                "fiel_key": b"ZmFrZQ==",
+                "fiel_password": "test-a",
             }
         )
-        cls.company_b = cls.env["res.company"].create(
+        cls.taxpayer_b = Taxpayer.create(
             {
-                "name": "Empresa B SAT",
-                "vat": "AAA010101AAA",
-                "country_id": cls.env.ref("base.mx").id,
-                "l10n_mx_sat_fiel_cer": b"ZmFrZQ==",
-                "l10n_mx_sat_fiel_key": b"ZmFrZQ==",
-                "l10n_mx_sat_fiel_password": "test-b",
+                "name": "Razon Social B",
+                "company_id": cls.company.id,
+                "rfc": "AAA010101AAA",
+                "fiel_cer": b"ZmFrZQ==",
+                "fiel_key": b"ZmFrZQ==",
+                "fiel_password": "test-b",
             }
         )
 
-    def test_documents_isolated_by_company(self):
-        req_a = self.env["l10n_mx_sat.download.request"].create(
+    def _request(self, taxpayer):
+        return self.env["l10n_mx_sat.download.request"].create(
             {
-                "company_id": self.company_a.id,
+                "taxpayer_id": taxpayer.id,
                 "document_kind": "cfdi",
                 "direction": "received",
                 "request_type": "metadata",
@@ -1732,49 +1740,38 @@ class TestMultiCompanySAT(TransactionCase):
                 "state": "done",
             }
         )
-        req_b = self.env["l10n_mx_sat.download.request"].create(
-            {
-                "company_id": self.company_b.id,
-                "document_kind": "cfdi",
-                "direction": "received",
-                "request_type": "metadata",
-                "date_from": "2026-01-01 00:00:00",
-                "date_to": "2026-01-31 23:59:59",
-                "state": "done",
-            }
-        )
+
+    def test_taxpayers_share_company_but_keep_separate_requests(self):
+        """Same range for two taxpayers must not collide on the fingerprint."""
+        req_a = self._request(self.taxpayer_a)
+        req_b = self._request(self.taxpayer_b)
+        self.assertNotEqual(req_a.request_fingerprint, req_b.request_fingerprint)
+        self.assertEqual(req_a.company_id, req_b.company_id)
+        self.assertEqual(req_a.company_id, self.company)
+
+    def test_documents_isolated_by_taxpayer(self):
+        req_a = self._request(self.taxpayer_a)
+        req_b = self._request(self.taxpayer_b)
         uuid = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
         self.env["l10n_mx_sat.document"]._upsert_from_metadata_row(
             {"uuid": uuid, "sat_status": "valid"},
-            self.company_a,
+            self.taxpayer_a,
             req_a,
         )
         self.env["l10n_mx_sat.document"]._upsert_from_metadata_row(
             {"uuid": uuid, "sat_status": "cancelled"},
-            self.company_b,
+            self.taxpayer_b,
             req_b,
         )
-        docs_a = (
-            self.env["l10n_mx_sat.document"]
-            .with_company(self.company_a)
-            .search(
-                [
-                    ("uuid", "=", uuid),
-                    ("company_id", "=", self.company_a.id),
-                ]
-            )
+        Document = self.env["l10n_mx_sat.document"]
+        docs_a = Document.search(
+            [("uuid", "=", uuid), ("taxpayer_id", "=", self.taxpayer_a.id)]
         )
-        docs_b = (
-            self.env["l10n_mx_sat.document"]
-            .with_company(self.company_b)
-            .search(
-                [
-                    ("uuid", "=", uuid),
-                    ("company_id", "=", self.company_b.id),
-                ]
-            )
+        docs_b = Document.search(
+            [("uuid", "=", uuid), ("taxpayer_id", "=", self.taxpayer_b.id)]
         )
         self.assertEqual(len(docs_a), 1)
         self.assertEqual(len(docs_b), 1)
         self.assertEqual(docs_a.sat_status, "valid")
         self.assertEqual(docs_b.sat_status, "cancelled")
+        self.assertEqual(docs_a.company_id, docs_b.company_id)

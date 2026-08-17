@@ -23,11 +23,19 @@ class L10nMxSatDocument(models.Model):
     _order = "issue_date desc, uuid"
     _rec_name = "display_name"
 
+    taxpayer_id = fields.Many2one(
+        comodel_name="l10n_mx_sat.taxpayer",
+        string="Taxpayer",
+        required=True,
+        readonly=True,
+        index=True,
+        ondelete="restrict",
+    )
     company_id = fields.Many2one(
         comodel_name="res.company",
         string="Company",
-        required=True,
-        default=lambda self: self.env.company,
+        related="taxpayer_id.company_id",
+        store=True,
         readonly=True,
         index=True,
     )
@@ -90,12 +98,12 @@ class L10nMxSatDocument(models.Model):
         compute="_compute_display_name", store=True, readonly=True
     )
 
-    _uuid_company_kind_direction_uniq = models.Constraint(
-        "UNIQUE(uuid, company_id, document_kind, direction)",
-        "A SAT document with this UUID already exists for this company.",
+    _uuid_taxpayer_kind_direction_uniq = models.Constraint(
+        "UNIQUE(uuid, taxpayer_id, document_kind, direction)",
+        "A SAT document with this UUID already exists for this taxpayer.",
     )
 
-    @api.depends("uuid", "document_kind", "direction", "company_id.vat")
+    @api.depends("uuid", "document_kind", "direction", "taxpayer_id.rfc")
     def _compute_display_name(self):
         fields_info = self.fields_get(["document_kind", "direction"])
         kind_labels = dict(fields_info["document_kind"]["selection"])
@@ -153,11 +161,11 @@ class L10nMxSatDocument(models.Model):
         return action
 
     @api.model
-    def _find_document(self, uuid, company, document_kind, direction):
+    def _find_document(self, uuid, taxpayer, document_kind, direction):
         return self.search(
             [
                 ("uuid", "=", uuid),
-                ("company_id", "=", company.id),
+                ("taxpayer_id", "=", taxpayer.id),
                 ("document_kind", "=", document_kind),
                 ("direction", "=", direction),
             ],
@@ -165,14 +173,14 @@ class L10nMxSatDocument(models.Model):
         )
 
     @api.model
-    def _upsert_from_metadata_row(self, row, company, request):
+    def _upsert_from_metadata_row(self, row, taxpayer, request):
         """Create or update a document from SAT metadata row."""
         uuid = (row.get("uuid") or "").upper()
         if not uuid:
             return self.browse()
 
         document = self._find_document(
-            uuid, company, request.document_kind, request.direction
+            uuid, taxpayer, request.document_kind, request.direction
         )
         write_vals = {"download_request_id": request.id}
         field_map = (
@@ -211,7 +219,7 @@ class L10nMxSatDocument(models.Model):
         document = self._sat_create(
             [
                 {
-                    "company_id": company.id,
+                    "taxpayer_id": taxpayer.id,
                     "uuid": uuid,
                     "document_kind": request.document_kind,
                     "direction": request.direction,
@@ -222,19 +230,19 @@ class L10nMxSatDocument(models.Model):
         return self.browse(document.id)
 
     @api.model
-    def _upsert_from_xml(self, tree, xml_bytes, company, request):
+    def _upsert_from_xml(self, tree, xml_bytes, taxpayer, request):
         """Create or update a document from a CFDI/retencion XML."""
         uuid = self._extract_uuid(tree)
         if not uuid:
             _logger.warning("XML without UUID, skipping")
             return self.browse()
 
-        if not self._validate_xml_company(tree, company, request):
+        if not self._validate_xml_taxpayer(tree, taxpayer, request):
             _logger.warning(
-                "Skipping XML for company %(company)s: UUID=%(uuid)s, "
+                "Skipping XML for taxpayer %(taxpayer)s: UUID=%(uuid)s, "
                 "document_kind=%(kind)s, direction=%(direction)s",
                 {
-                    "company": company.display_name,
+                    "taxpayer": taxpayer.display_name,
                     "uuid": uuid,
                     "kind": request.document_kind,
                     "direction": request.direction,
@@ -244,7 +252,7 @@ class L10nMxSatDocument(models.Model):
 
         vals = self._parse_xml_values(tree, request.document_kind)
         document = self._find_document(
-            uuid, company, request.document_kind, request.direction
+            uuid, taxpayer, request.document_kind, request.direction
         )
         vals["download_request_id"] = request.id
         vals["has_xml"] = True
@@ -255,7 +263,7 @@ class L10nMxSatDocument(models.Model):
             sat_document = self._sat_create(
                 [
                     {
-                        "company_id": company.id,
+                        "taxpayer_id": taxpayer.id,
                         "uuid": uuid,
                         "document_kind": request.document_kind,
                         "direction": request.direction,
@@ -272,7 +280,7 @@ class L10nMxSatDocument(models.Model):
             "res_model": self._name,
             "res_id": document.id,
             "mimetype": "application/xml",
-            "company_id": company.id,
+            "company_id": taxpayer.company_id.id,
         }
         if attachment:
             attachment.write({"raw": xml_bytes})
@@ -308,14 +316,14 @@ class L10nMxSatDocument(models.Model):
         return False
 
     @api.model
-    def _get_company_rfc(self, company):
-        """Resolve company RFC from VAT or FIEL credentials."""
-        rfc = (company.vat or "").strip().upper()
+    def _get_taxpayer_rfc(self, taxpayer):
+        """Resolve the taxpayer RFC, falling back to the FIEL certificate."""
+        rfc = (taxpayer.rfc or "").strip().upper()
         if rfc:
             return rfc
-        if company.l10n_mx_sat_has_credentials():
+        if taxpayer._has_credentials():
             try:
-                return company.l10n_mx_sat_get_rfc()
+                return taxpayer._get_rfc()
             except Exception:
                 return False
         return False
@@ -432,27 +440,27 @@ class L10nMxSatDocument(models.Model):
         return 0.0
 
     @api.model
-    def _validate_xml_company(self, tree, company, request):
-        company_rfc = self._get_company_rfc(company)
+    def _validate_xml_taxpayer(self, tree, taxpayer, request):
+        taxpayer_rfc = self._get_taxpayer_rfc(taxpayer)
         if request.document_kind == "cfdi":
             if request.direction == "received":
                 receptor = tree.find("{*}Receptor")
                 if receptor is None:
                     return False
                 rfc = (receptor.get("Rfc") or "").upper()
-                return rfc == company_rfc
+                return rfc == taxpayer_rfc
             emisor = tree.find("{*}Emisor")
             if emisor is None:
                 return False
             rfc = (emisor.get("Rfc") or "").upper()
-            return rfc == company_rfc
-        if not company_rfc:
+            return rfc == taxpayer_rfc
+        if not taxpayer_rfc:
             return True
         if request.direction == "received":
             rfc = self._get_retention_receptor_rfc(tree)
         else:
             rfc = self._get_retention_emisor_rfc(tree)
-        return bool(rfc) and rfc == company_rfc
+        return bool(rfc) and rfc == taxpayer_rfc
 
     @api.model
     def _parse_xml_values(self, tree, document_kind):

@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 from satcfdi.pacs import Accept, CancelReason, Document, Environment
 
@@ -372,17 +372,16 @@ class TestCFDIService(TransactionCase):
 
         fiel_signer = MagicMock(name="fiel")
         csd_signer = MagicMock(name="csd")
-        fiel_company = SimpleNamespace(
-            l10n_mx_sat_fiel_cer=b"Y2Vy",
-            l10n_mx_sat_fiel_key=b"a2V5",
-            l10n_mx_sat_fiel_password="secret",
+        fiel_taxpayer = SimpleNamespace(
+            fiel_cer=b"Y2Vy",
+            fiel_key=b"a2V5",
+            fiel_password="secret",
         )
         with (
             patch.object(
-                type(self.issuer),
-                "company_id",
-                new_callable=PropertyMock,
-                return_value=fiel_company,
+                type(self.cfdi_service),
+                "_get_sat_taxpayer",
+                return_value=fiel_taxpayer,
             ),
             patch(
                 "odoo.addons.l10n_mx_cfdi.models.cfdi_service.Signer.load",
@@ -394,10 +393,9 @@ class TestCFDIService(TransactionCase):
 
         with (
             patch.object(
-                type(self.issuer),
-                "company_id",
-                new_callable=PropertyMock,
-                return_value=fiel_company,
+                type(self.cfdi_service),
+                "_get_sat_taxpayer",
+                return_value=fiel_taxpayer,
             ),
             patch(
                 "odoo.addons.l10n_mx_cfdi.models.cfdi_service.Signer.load",
@@ -413,6 +411,12 @@ class TestCFDIService(TransactionCase):
             result = self.cfdi_service._get_cancel_signer(self.issuer)
         self.assertIs(result, csd_signer)
         mock_csd.assert_called_once()
+
+    def test_get_sat_taxpayer_absent_without_module(self):
+        """Without l10n_mx_sat installed, cancellation falls back to the CSD."""
+        if "l10n_mx_sat.taxpayer" in self.env:
+            self.skipTest("l10n_mx_sat is installed in this database")
+        self.assertIsNone(self.cfdi_service._get_sat_taxpayer(self.issuer))
 
     def test_cancel_cfdi_requires_issuer_for_finkok(self):
         xml = (

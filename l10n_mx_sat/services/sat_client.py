@@ -44,7 +44,7 @@ class SatClient:
     """SAT web service adapter via satcfdi.
 
     Pure Python class with no Odoo ORM dependency.
-    Swappable through the res.company.l10n_mx_sat_get_client() factory.
+    Swappable through the l10n_mx_sat.taxpayer._get_client() factory.
     """
 
     DOCUMENT_KIND_CFDI = "cfdi"

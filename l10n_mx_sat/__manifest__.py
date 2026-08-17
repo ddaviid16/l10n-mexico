@@ -3,7 +3,7 @@
 
 {
     "name": "Mexico - SAT Connection",
-    "version": "19.0.1.0.0",
+    "version": "19.0.2.0.0",
     "category": "Accounting/Localizations",
     "summary": "Connect to the SAT portal using FIEL credentials & manage downloads",
     "author": (
@@ -22,7 +22,7 @@
         "security/l10n_mx_sat_rules.xml",
         "data/ir_cron_data.xml",
         "wizards/l10n_mx_sat_fiel_credentials_wizard_views.xml",
-        "views/res_company_views.xml",
+        "views/l10n_mx_sat_taxpayer_views.xml",
         "views/l10n_mx_sat_document_views.xml",
         "views/l10n_mx_sat_download_request_views.xml",
     ],

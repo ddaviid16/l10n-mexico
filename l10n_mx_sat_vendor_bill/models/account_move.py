@@ -28,6 +28,14 @@ class AccountMove(models.Model):
         copy=False,
         readonly=True,
     )
+    l10n_mx_sat_taxpayer_id = fields.Many2one(
+        comodel_name="l10n_mx_sat.taxpayer",
+        string="SAT Taxpayer",
+        copy=False,
+        readonly=True,
+        index="btree_not_null",
+        help="Legal entity (razon social) whose SAT download produced this bill.",
+    )
 
     _l10n_mx_cfdi_uuid_company_uniq = models.Constraint(
         "UNIQUE(l10n_mx_cfdi_uuid, company_id)",
@@ -149,6 +157,7 @@ class AccountMove(models.Model):
         :param request: l10n_mx_sat.download.request record
         :return: created account.move or False
         """
+        taxpayer = request.taxpayer_id
         company = request.company_id
 
         # 1. Extract UUID
@@ -232,13 +241,14 @@ class AccountMove(models.Model):
         folio = tree.get("Folio", "")
         ref = f"{serie}-{folio}" if serie and folio else folio or uuid[:8]
 
-        # 8. Find purchase journal
-        journal = self.env["account.journal"].search(
-            [("type", "=", "purchase"), ("company_id", "=", company.id)],
-            limit=1,
-        )
+        # 8. Find purchase journal (taxpayer-specific when configured)
+        journal = taxpayer._get_purchase_journal()
         if not journal:
-            _logger.warning("No purchase journal found for company %s", company.name)
+            _logger.warning(
+                "No purchase journal found for taxpayer %s (company %s)",
+                taxpayer.name,
+                company.name,
+            )
             return False
 
         # 9. Create the move
@@ -255,6 +265,7 @@ class AccountMove(models.Model):
             move.invoice_date = invoice_date
             move.ref = ref
             move.l10n_mx_sat_download_request_id = request.id
+            move.l10n_mx_sat_taxpayer_id = taxpayer.id
 
             for concepto in tree.findall("{*}Conceptos/{*}Concepto"):
                 line = self.env["account.move.line"].create(

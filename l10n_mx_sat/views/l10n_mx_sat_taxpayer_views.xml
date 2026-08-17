@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="l10n_mx_sat_taxpayer_view_list" model="ir.ui.view">
+        <field name="name">l10n_mx_sat.taxpayer.list</field>
+        <field name="model">l10n_mx_sat.taxpayer</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name" />
+                <field name="rfc" />
+                <field name="fiel_configured" />
+                <field name="auto_download" />
+                <field name="last_sync" />
+                <field name="company_id" groups="base.group_multi_company" />
+            </list>
+        </field>
+    </record>
+
+    <record id="l10n_mx_sat_taxpayer_view_form" model="ir.ui.view">
+        <field name="name">l10n_mx_sat.taxpayer.form</field>
+        <field name="model">l10n_mx_sat.taxpayer</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button
+                        name="action_open_fiel_wizard"
+                        type="object"
+                        string="Upload FIEL credentials"
+                        class="btn-secondary"
+                        icon="fa-key"
+                        invisible="not id"
+                    />
+                    <button
+                        name="action_test_connection"
+                        type="object"
+                        string="Test connection"
+                        class="btn-secondary"
+                        icon="fa-plug"
+                        invisible="not fiel_configured"
+                    />
+                    <button
+                        name="action_sync_now"
+                        type="object"
+                        string="Sync now"
+                        class="btn-primary"
+                        icon="fa-refresh"
+                        invisible="not fiel_configured"
+                    />
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button
+                            class="oe_stat_button"
+                            type="object"
+                            name="action_view_documents"
+                            icon="fa-file-text-o"
+                        >
+                            <field
+                                name="document_count"
+                                widget="statinfo"
+                                string="SAT documents"
+                            />
+                        </button>
+                        <button
+                            class="oe_stat_button"
+                            type="object"
+                            name="action_view_download_requests"
+                            icon="fa-cloud-download"
+                        >
+                            <field
+                                name="download_request_count"
+                                widget="statinfo"
+                                string="Download requests"
+                            />
+                        </button>
+                    </div>
+                    <widget
+                        name="web_ribbon"
+                        title="Archived"
+                        bg_color="text-bg-danger"
+                        invisible="active"
+                    />
+                    <field name="active" invisible="1" />
+                    <div class="oe_title">
+                        <label for="name" string="Legal name" />
+                        <h1>
+                            <field name="name" placeholder="Razon social" />
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Identification">
+                            <field name="rfc" placeholder="Set by the FIEL upload" />
+                            <field name="fiel_configured" />
+                            <field
+                                name="fiel_certificate_configured"
+                                invisible="fiel_configured"
+                            />
+                            <field
+                                name="fiel_key_configured"
+                                invisible="fiel_configured"
+                            />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                        </group>
+                        <group string="Synchronization">
+                            <field name="auto_download" />
+                            <field name="sync_from" />
+                            <field name="metadata_sync_from" />
+                            <field name="last_sync" />
+                            <field name="last_metadata_sync" />
+                        </group>
+                    </group>
+                    <group string="Download types">
+                        <group>
+                            <field name="download_cfdi_issued" />
+                            <field name="download_cfdi_received" />
+                        </group>
+                        <group>
+                            <field name="download_retention_issued" />
+                            <field name="download_retention_received" />
+                        </group>
+                    </group>
+                    <div
+                        class="alert alert-info"
+                        role="alert"
+                        invisible="fiel_configured"
+                    >
+                        Upload the FIEL certificate, private key and password to
+                        enable SAT downloads for this taxpayer. The RFC is read
+                        from the certificate.
+                    </div>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="l10n_mx_sat_taxpayer_view_search" model="ir.ui.view">
+        <field name="name">l10n_mx_sat.taxpayer.search</field>
+        <field name="model">l10n_mx_sat.taxpayer</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name" />
+                <field name="rfc" />
+                <filter
+                    string="Automatic download"
+                    name="auto_download"
+                    domain="[('auto_download', '=', True)]"
+                />
+                <filter
+                    string="Archived"
+                    name="inactive"
+                    domain="[('active', '=', False)]"
+                />
+                <group>
+                    <filter
+                        string="Company"
+                        name="group_company"
+                        context="{'group_by': 'company_id'}"
+                    />
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="l10n_mx_sat_taxpayer_action" model="ir.actions.act_window">
+        <field name="name">Taxpayers</field>
+        <field name="res_model">l10n_mx_sat.taxpayer</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="l10n_mx_sat_taxpayer_view_search" />
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Register a taxpayer (razon social)
+            </p>
+            <p>
+                Each taxpayer holds its own FIEL credentials and downloads
+                CFDIs from the SAT independently, without needing a separate
+                Odoo company.
+            </p>
+        </field>
+    </record>
+</odoo>

@@ -13,7 +13,7 @@ from odoo.tools import mute_logger
 from odoo.addons.l10n_mx_sat.services.sat_helpers import SAFE_XML_PARSER
 
 _PATCH_GET_CLIENT = (
-    "odoo.addons.l10n_mx_sat.models.res_company.ResCompany.l10n_mx_sat_get_client"
+    "odoo.addons.l10n_mx_sat.models.l10n_mx_sat_taxpayer.L10nMxSatTaxpayer._get_client"
 )
 
 
@@ -23,13 +23,15 @@ class TestSatDocument(TransactionCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.company = cls.env.ref("base.main_company")
-        cls.company.write(
+        cls.company.write({"country_id": cls.env.ref("base.mx").id})
+        cls.taxpayer = cls.env["l10n_mx_sat.taxpayer"].create(
             {
-                "vat": "EKU9003173C9",
-                "country_id": cls.env.ref("base.mx").id,
-                "l10n_mx_sat_fiel_cer": b"ZmFrZQ==",
-                "l10n_mx_sat_fiel_key": b"ZmFrZQ==",
-                "l10n_mx_sat_fiel_password": "test",
+                "name": "Razon Social Uno",
+                "company_id": cls.company.id,
+                "rfc": "EKU9003173C9",
+                "fiel_cer": b"ZmFrZQ==",
+                "fiel_key": b"ZmFrZQ==",
+                "fiel_password": "test",
             }
         )
         cls.Document = cls.env["l10n_mx_sat.document"]
@@ -40,7 +42,7 @@ class TestSatDocument(TransactionCase):
 
     def _create_request(self, **kwargs):
         vals = {
-            "company_id": self.company.id,
+            "taxpayer_id": self.taxpayer.id,
             "document_kind": "cfdi",
             "direction": "received",
             "request_type": "xml",
@@ -196,7 +198,7 @@ class TestSatDocument(TransactionCase):
         self.assertEqual(vals["issuer_rfc"], "EKU9003173C9")
         self.assertTrue(vals["stamp_date"])
 
-    def test_validate_xml_company_cfdi_received_valid_and_invalid(self):
+    def test_validate_xml_taxpayer_cfdi_received_valid_and_invalid(self):
         request = self._create_request(document_kind="cfdi", direction="received")
         valid = self._parse_xml(
             b'<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4">'
@@ -209,13 +211,13 @@ class TestSatDocument(TransactionCase):
             b"</cfdi:Comprobante>"
         )
         self.assertTrue(
-            self.Document._validate_xml_company(valid, self.company, request)
+            self.Document._validate_xml_taxpayer(valid, self.taxpayer, request)
         )
         self.assertFalse(
-            self.Document._validate_xml_company(invalid, self.company, request)
+            self.Document._validate_xml_taxpayer(invalid, self.taxpayer, request)
         )
 
-    def test_validate_xml_company_cfdi_issued(self):
+    def test_validate_xml_taxpayer_cfdi_issued(self):
         request = self._create_request(document_kind="cfdi", direction="issued")
         valid = self._parse_xml(
             b'<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4">'
@@ -223,10 +225,10 @@ class TestSatDocument(TransactionCase):
             b"</cfdi:Comprobante>"
         )
         self.assertTrue(
-            self.Document._validate_xml_company(valid, self.company, request)
+            self.Document._validate_xml_taxpayer(valid, self.taxpayer, request)
         )
 
-    def test_validate_xml_company_retention_issued_and_received(self):
+    def test_validate_xml_taxpayer_retention_issued_and_received(self):
         issued_req = self._create_request(document_kind="retention", direction="issued")
         received_req = self._create_request(
             document_kind="retention", direction="received"
@@ -236,41 +238,41 @@ class TestSatDocument(TransactionCase):
             b"<root><Receptor RfcReceptor='EKU9003173C9'/></root>"
         )
         self.assertTrue(
-            self.Document._validate_xml_company(issued_xml, self.company, issued_req)
+            self.Document._validate_xml_taxpayer(issued_xml, self.taxpayer, issued_req)
         )
         self.assertTrue(
-            self.Document._validate_xml_company(
-                received_xml, self.company, received_req
+            self.Document._validate_xml_taxpayer(
+                received_xml, self.taxpayer, received_req
             )
         )
 
-    def test_get_company_rfc_falls_back_to_fiel(self):
-        self.company.vat = False
+    def test_get_taxpayer_rfc_falls_back_to_fiel(self):
+        self.taxpayer.rfc = False
         client = MagicMock()
         client.rfc = "RFCFIEL123"
         with patch(_PATCH_GET_CLIENT, return_value=client):
             self.assertEqual(
-                self.Document._get_company_rfc(self.company),
+                self.Document._get_taxpayer_rfc(self.taxpayer),
                 "RFCFIEL123",
             )
 
-    def test_validate_xml_company_retention_without_company_rfc(self):
-        self.company.write(
+    def test_validate_xml_taxpayer_retention_without_taxpayer_rfc(self):
+        self.taxpayer.write(
             {
-                "vat": False,
-                "l10n_mx_sat_fiel_cer": False,
-                "l10n_mx_sat_fiel_key": False,
-                "l10n_mx_sat_fiel_password": False,
+                "rfc": False,
+                "fiel_cer": False,
+                "fiel_key": False,
+                "fiel_password": False,
             }
         )
         request = self._create_request(document_kind="retention", direction="issued")
         tree = self._parse_xml(b"<root><Emisor Rfc='AAA010101AAA'/></root>")
         self.assertTrue(
-            self.Document._validate_xml_company(tree, self.company, request)
+            self.Document._validate_xml_taxpayer(tree, self.taxpayer, request)
         )
 
     @mute_logger("odoo.addons.l10n_mx_sat.models.l10n_mx_sat_document")
-    def test_upsert_from_xml_skips_wrong_company(self):
+    def test_upsert_from_xml_skips_wrong_taxpayer(self):
         request = self._create_request(document_kind="cfdi", direction="received")
         xml_bytes = (
             b'<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4">'
@@ -282,14 +284,14 @@ class TestSatDocument(TransactionCase):
             b"</cfdi:Complemento></cfdi:Comprobante>"
         )
         tree = self._parse_xml(xml_bytes)
-        doc = self.Document._upsert_from_xml(tree, xml_bytes, self.company, request)
+        doc = self.Document._upsert_from_xml(tree, xml_bytes, self.taxpayer, request)
         self.assertFalse(doc)
 
     def test_action_download_xml_without_attachment(self):
         doc = self.Document._sat_create(
             [
                 {
-                    "company_id": self.company.id,
+                    "taxpayer_id": self.taxpayer.id,
                     "uuid": "NO-ATTACH-UUID",
                     "document_kind": "cfdi",
                     "direction": "received",
@@ -312,7 +314,7 @@ class TestSatDocument(TransactionCase):
             b"</cfdi:Complemento></cfdi:Comprobante>"
         )
         tree = self._parse_xml(xml_bytes)
-        doc = self.Document._upsert_from_xml(tree, xml_bytes, self.company, request)
+        doc = self.Document._upsert_from_xml(tree, xml_bytes, self.taxpayer, request)
         self.assertTrue(doc)
         self.assertTrue(doc.attachment_id)
         action = doc.action_download_xml()
@@ -330,7 +332,7 @@ class TestSatDocument(TransactionCase):
         doc = self.Document._sat_create(
             [
                 {
-                    "company_id": self.company.id,
+                    "taxpayer_id": self.taxpayer.id,
                     "uuid": "VALIDATE-STATUS-UUID",
                     "document_kind": "cfdi",
                     "direction": "received",
@@ -351,7 +353,7 @@ class TestSatDocument(TransactionCase):
         doc = self.Document._sat_create(
             [
                 {
-                    "company_id": self.company.id,
+                    "taxpayer_id": self.taxpayer.id,
                     "uuid": "UNLINK-BLOCK-UUID",
                     "document_kind": "cfdi",
                     "direction": "received",
@@ -365,7 +367,7 @@ class TestSatDocument(TransactionCase):
         doc = self.Document._sat_create(
             [
                 {
-                    "company_id": self.company.id,
+                    "taxpayer_id": self.taxpayer.id,
                     "uuid": "DISPLAY-UUID-123",
                     "document_kind": "cfdi",
                     "direction": "received",
@@ -401,7 +403,7 @@ class TestSatDocument(TransactionCase):
         )
         tree = self._parse_xml(xml_bytes)
         self.assertFalse(
-            self.Document._upsert_from_xml(tree, xml_bytes, self.company, request)
+            self.Document._upsert_from_xml(tree, xml_bytes, self.taxpayer, request)
         )
 
     def test_upsert_from_xml_updates_existing_attachment(self):
@@ -423,11 +425,11 @@ class TestSatDocument(TransactionCase):
 
         first = _xml(b"10.00")
         doc1 = self.Document._upsert_from_xml(
-            self._parse_xml(first), first, self.company, request
+            self._parse_xml(first), first, self.taxpayer, request
         )
         second = _xml(b"99.50")
         doc2 = self.Document._upsert_from_xml(
-            self._parse_xml(second), second, self.company, request
+            self._parse_xml(second), second, self.taxpayer, request
         )
         self.assertEqual(doc1.id, doc2.id)
         self.assertEqual(doc2.attachment_id.raw, second)
@@ -460,29 +462,29 @@ class TestSatDocument(TransactionCase):
         self.assertTrue(values["issue_date"])
         self.assertTrue(values["stamp_date"])
 
-    def test_validate_xml_company_missing_partner_nodes(self):
+    def test_validate_xml_taxpayer_missing_partner_nodes(self):
         request = self._create_request(document_kind="cfdi", direction="received")
         tree = self._parse_xml(
             b'<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4"/>'
         )
         self.assertFalse(
-            self.Document._validate_xml_company(tree, self.company, request)
+            self.Document._validate_xml_taxpayer(tree, self.taxpayer, request)
         )
         request_issued = self._create_request(document_kind="cfdi", direction="issued")
         self.assertFalse(
-            self.Document._validate_xml_company(tree, self.company, request_issued)
+            self.Document._validate_xml_taxpayer(tree, self.taxpayer, request_issued)
         )
 
-    def test_get_company_rfc_returns_false_on_exception(self):
-        self.company.vat = False
+    def test_get_taxpayer_rfc_returns_false_on_exception(self):
+        self.taxpayer.rfc = False
         with patch(_PATCH_GET_CLIENT, side_effect=Exception("boom")):
-            self.assertFalse(self.Document._get_company_rfc(self.company))
+            self.assertFalse(self.Document._get_taxpayer_rfc(self.taxpayer))
 
     def test_upsert_from_metadata_empty_uuid(self):
         request = self._create_request(request_type="metadata")
         doc = self.Document._upsert_from_metadata_row(
             {"uuid": "", "sat_status": "valid"},
-            self.company,
+            self.taxpayer,
             request,
         )
         self.assertFalse(doc)
@@ -501,7 +503,7 @@ class TestSatDocument(TransactionCase):
                 "total": "100.50",
                 "issue_date": "2026-02-01T10:00:00",
             },
-            self.company,
+            self.taxpayer,
             request,
         )
         self.assertEqual(doc.total, 100.50)
@@ -513,7 +515,7 @@ class TestSatDocument(TransactionCase):
                 "total": "not-a-float",
                 "sat_status": "cancelled",
             },
-            self.company,
+            self.taxpayer,
             request,
         )
         self.assertEqual(doc.issuer_rfc, "AAA010101AAA")
@@ -538,7 +540,7 @@ class TestSatDocument(TransactionCase):
         ):
             doc = self.Document.create(
                 {
-                    "company_id": self.company.id,
+                    "taxpayer_id": self.taxpayer.id,
                     "uuid": "MANUAL-API-UUID-123456789012345678901",
                     "document_kind": "cfdi",
                     "direction": "received",

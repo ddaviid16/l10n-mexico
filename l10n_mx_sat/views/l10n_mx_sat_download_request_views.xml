@@ -6,6 +6,7 @@
         <field name="arch" type="xml">
             <list delete="0">
                 <field name="name" readonly="1" />
+                <field name="taxpayer_id" readonly="1" />
                 <field
                     name="company_id"
                     groups="base.group_multi_company"
@@ -70,7 +71,15 @@
                     </div>
                     <group>
                         <group>
-                            <field name="company_id" />
+                            <field
+                                name="taxpayer_id"
+                                readonly="state != 'draft'"
+                            />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                                readonly="1"
+                            />
                             <field name="document_kind" />
                             <field name="direction" />
                             <field name="request_type" />
@@ -140,6 +149,7 @@
         <field name="arch" type="xml">
             <search>
                 <field name="name" />
+                <field name="taxpayer_id" />
                 <field name="company_id" groups="base.group_multi_company" />
                 <filter
                     string="XML"
@@ -163,9 +173,15 @@
                 />
                 <group>
                     <filter
+                        string="Taxpayer"
+                        name="group_taxpayer"
+                        context="{'group_by': 'taxpayer_id'}"
+                    />
+                    <filter
                         string="Company"
                         name="group_company"
                         context="{'group_by': 'company_id'}"
+                        groups="base.group_multi_company"
                     />
                     <filter
                         string="State"
@@ -219,10 +235,10 @@
         groups="l10n_mx_sat.group_sat_manager"
     />
     <menuitem
-        id="menu_l10n_mx_sat_configure_connections"
-        name="Configurar conexiones"
+        id="menu_l10n_mx_sat_taxpayers"
+        name="Taxpayers"
         parent="menu_l10n_mx_sat_settings"
-        action="l10n_mx_sat_company_connection_action"
+        action="l10n_mx_sat_taxpayer_action"
         sequence="10"
         groups="l10n_mx_sat.group_sat_manager"
     />

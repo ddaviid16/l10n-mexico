@@ -32,7 +32,7 @@ def normalize_sat_status(value):
 
 
 def build_request_fingerprint(
-    company_id,
+    taxpayer_id,
     document_kind,
     direction,
     request_type,
@@ -42,7 +42,7 @@ def build_request_fingerprint(
     """Build a stable fingerprint to avoid duplicate SAT requests (code 5002)."""
     payload = "|".join(
         [
-            str(company_id),
+            str(taxpayer_id),
             document_kind or "",
             direction or "",
             request_type or "",

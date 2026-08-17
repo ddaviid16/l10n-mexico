@@ -16,7 +16,7 @@ class TestSatDocumentVendorBillHook(VendorBillTestCommon):
         xml_bytes = self._cfdi_xml(uuid=uuid, folio="H1")
         tree = self._parse(xml_bytes)
         document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
-            tree, xml_bytes, self.company, self.request
+            tree, xml_bytes, self.taxpayer, self.request
         )
         self.assertTrue(document)
         self.assertTrue(document.vendor_bill_id)
@@ -29,7 +29,7 @@ class TestSatDocumentVendorBillHook(VendorBillTestCommon):
     def test_upsert_skips_bill_for_issued_direction(self):
         request = self.env["l10n_mx_sat.download.request"].create(
             {
-                "company_id": self.company.id,
+                "taxpayer_id": self.taxpayer.id,
                 "document_kind": "cfdi",
                 "direction": "issued",
                 "request_type": "xml",
@@ -38,15 +38,15 @@ class TestSatDocumentVendorBillHook(VendorBillTestCommon):
                 "state": "downloading",
             }
         )
-        # Issued validation requires Emisor RFC == company VAT
+        # Issued validation requires Emisor RFC == taxpayer RFC
         xml_bytes = self._cfdi_xml(
             uuid="HOOK-ISSUED-1111-2222-3333-444455556666",
             folio="H2",
-            emisor_rfc=self.company.vat,
+            emisor_rfc=self.taxpayer.rfc,
             emisor_nombre="EMPRESA LOCAL",
         )
         document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
-            self._parse(xml_bytes), xml_bytes, self.company, request
+            self._parse(xml_bytes), xml_bytes, self.taxpayer, request
         )
         self.assertTrue(document)
         self.assertFalse(document.vendor_bill_id)
@@ -54,7 +54,7 @@ class TestSatDocumentVendorBillHook(VendorBillTestCommon):
     def test_upsert_skips_bill_for_metadata_request(self):
         request = self.env["l10n_mx_sat.download.request"].create(
             {
-                "company_id": self.company.id,
+                "taxpayer_id": self.taxpayer.id,
                 "document_kind": "cfdi",
                 "direction": "received",
                 "request_type": "metadata",
@@ -67,7 +67,7 @@ class TestSatDocumentVendorBillHook(VendorBillTestCommon):
             uuid="HOOK-META-1111-2222-3333-444455556666", folio="H3"
         )
         document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
-            self._parse(xml_bytes), xml_bytes, self.company, request
+            self._parse(xml_bytes), xml_bytes, self.taxpayer, request
         )
         self.assertTrue(document)
         self.assertFalse(document.vendor_bill_id)
@@ -75,7 +75,7 @@ class TestSatDocumentVendorBillHook(VendorBillTestCommon):
     def test_upsert_skips_bill_for_retention(self):
         request = self.env["l10n_mx_sat.download.request"].create(
             {
-                "company_id": self.company.id,
+                "taxpayer_id": self.taxpayer.id,
                 "document_kind": "retention",
                 "direction": "received",
                 "request_type": "xml",
@@ -102,7 +102,7 @@ class TestSatDocumentVendorBillHook(VendorBillTestCommon):
             b"</retenciones:Complemento></retenciones:Retenciones>"
         )
         document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
-            self._parse(xml_bytes), xml_bytes, self.company, request
+            self._parse(xml_bytes), xml_bytes, self.taxpayer, request
         )
         self.assertTrue(document)
         self.assertFalse(document.vendor_bill_id)
@@ -116,7 +116,7 @@ class TestSatDocumentVendorBillHook(VendorBillTestCommon):
             moneda="XXX",
         )
         document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
-            self._parse(xml_bytes), xml_bytes, self.company, self.request
+            self._parse(xml_bytes), xml_bytes, self.taxpayer, self.request
         )
         self.assertTrue(document)
         self.assertFalse(document.vendor_bill_id)
@@ -127,9 +127,9 @@ class TestSatDocumentVendorBillHook(VendorBillTestCommon):
             uuid="HOOK-SKIP-1111-2222-3333-444455556666",
             folio="H5",
         )
-        # Break company match by changing receptor through a rebuilt XML
+        # Break taxpayer match by changing receptor through a rebuilt XML
         bad_xml = xml_bytes.replace(b"EKU9003173C9", b"AAA010101AAA")
         document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
-            self._parse(bad_xml), bad_xml, self.company, self.request
+            self._parse(bad_xml), bad_xml, self.taxpayer, self.request
         )
         self.assertFalse(document)

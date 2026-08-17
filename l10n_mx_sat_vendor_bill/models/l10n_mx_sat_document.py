@@ -15,8 +15,8 @@ class L10nMxSatDocument(models.Model):
     )
 
     @api.model
-    def _upsert_from_xml(self, tree, xml_bytes, company, request):
-        document = super()._upsert_from_xml(tree, xml_bytes, company, request)
+    def _upsert_from_xml(self, tree, xml_bytes, taxpayer, request):
+        document = super()._upsert_from_xml(tree, xml_bytes, taxpayer, request)
         if not document:
             return document
         if (

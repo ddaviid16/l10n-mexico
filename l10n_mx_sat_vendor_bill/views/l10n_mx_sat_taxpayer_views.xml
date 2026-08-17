@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record
+        id="l10n_mx_sat_taxpayer_view_form_inherit_vendor_bill"
+        model="ir.ui.view"
+    >
+        <field name="name">l10n_mx_sat.taxpayer.form.inherit.vendor.bill</field>
+        <field name="model">l10n_mx_sat.taxpayer</field>
+        <field name="inherit_id" ref="l10n_mx_sat.l10n_mx_sat_taxpayer_view_form" />
+        <field name="arch" type="xml">
+            <xpath expr="//group[@string='Synchronization']" position="after">
+                <group string="Accounting">
+                    <field name="purchase_journal_id" />
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>
