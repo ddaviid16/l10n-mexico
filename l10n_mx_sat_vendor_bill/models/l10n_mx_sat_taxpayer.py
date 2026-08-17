@@ -9,13 +9,13 @@ class L10nMxSatTaxpayer(models.Model):
 
     purchase_journal_id = fields.Many2one(
         comodel_name="account.journal",
-        string="Vendor bill journal",
+        string="Diario de facturas de proveedor",
         domain="[('type', '=', 'purchase'), ('company_id', '=', company_id)]",
         check_company=True,
-        help="Journal used for vendor bills imported for this taxpayer. "
-        "Leave empty to use the first purchase journal of the company. "
-        "Set a dedicated journal per taxpayer to keep their bills apart "
-        "when several taxpayers share one Odoo company.",
+        help="Diario usado para las facturas de proveedor importadas de esta "
+        "razón social. Si se deja vacío se usa el primer diario de compras de "
+        "la compañía. Asigna un diario propio a cada razón social para separar "
+        "sus facturas cuando varias comparten una misma compañía de Odoo.",
     )
 
     def _get_purchase_journal(self):

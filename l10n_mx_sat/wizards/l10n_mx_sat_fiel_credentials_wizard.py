@@ -20,15 +20,15 @@ class L10nMxSatFielCredentialsWizard(models.TransientModel):
         readonly=True,
     )
     fiel_cer = fields.Binary(
-        string="FIEL certificate (.cer)",
+        string="Certificado FIEL (.cer)",
         attachment=False,
     )
     fiel_key = fields.Binary(
-        string="FIEL private key (.key)",
+        string="Llave privada FIEL (.key)",
         attachment=False,
     )
     fiel_password = fields.Char(
-        string="FIEL password",
+        string="Contraseña FIEL",
         default="",
     )
 

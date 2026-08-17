@@ -33,90 +33,90 @@ class L10nMxSatTaxpayer(models.Model):
         readonly=True,
         copy=False,
         index=True,
-        help="Read from the FIEL certificate. Upload a new FIEL to change it.",
+        help="Se lee del certificado FIEL. Sube una FIEL nueva para cambiarlo.",
     )
     active = fields.Boolean(default=True)
     company_id = fields.Many2one(
         comodel_name="res.company",
-        string="Company",
+        string="Compañía",
         required=True,
         index=True,
         default=lambda self: self.env.company,
-        help="Odoo company that owns the documents downloaded for this taxpayer.",
+        help="Compañía de Odoo propietaria de los documentos de esta razón social.",
     )
     fiel_cer = fields.Binary(
-        string="FIEL certificate (.cer)",
+        string="Certificado FIEL (.cer)",
         groups="base.group_system",
         attachment=False,
     )
     fiel_key = fields.Binary(
-        string="FIEL private key (.key)",
+        string="Llave privada FIEL (.key)",
         groups="base.group_system",
         attachment=False,
     )
     fiel_password = fields.Char(
-        string="FIEL password",
+        string="Contraseña FIEL",
         groups="base.group_system",
     )
     sync_from = fields.Date(
-        string="Sync documents from",
-        help="Initial date for the first bulk XML download. "
-        "After the first successful sync, the system continues "
-        "incrementally from the last completed range.",
+        string="Sincronizar documentos desde",
+        help="Fecha inicial de la primera descarga masiva de XML. "
+        "Tras la primera sincronización correcta, el sistema continúa "
+        "de forma incremental desde el último rango completado.",
     )
     metadata_sync_from = fields.Date(
-        string="Sync metadata from",
-        help="Initial date for bulk metadata download (SAT status). "
-        "If empty, the same date as XML sync is used.",
+        string="Sincronizar metadatos desde",
+        help="Fecha inicial de la descarga masiva de metadatos (estatus SAT). "
+        "Si se deja vacía se usa la misma fecha que la sincronización XML.",
     )
     last_sync = fields.Datetime(
-        string="Last XML sync",
+        string="Última sincronización XML",
         readonly=True,
     )
     last_metadata_sync = fields.Datetime(
-        string="Last metadata sync",
+        string="Última sincronización de metadatos",
         readonly=True,
     )
     auto_download = fields.Boolean(
-        string="Automatic SAT download",
+        string="Descarga automática del SAT",
         default=True,
-        help="Enables daily creation and processing of bulk download "
-        "requests for this taxpayer.",
+        help="Habilita la creación y el procesamiento diarios de solicitudes "
+        "de descarga masiva para esta razón social.",
     )
     download_cfdi_issued = fields.Boolean(
-        string="Download issued CFDIs",
+        string="Descargar CFDI emitidos",
         default=True,
     )
     download_cfdi_received = fields.Boolean(
-        string="Download received CFDIs",
+        string="Descargar CFDI recibidos",
         default=True,
     )
     download_retention_issued = fields.Boolean(
-        string="Download issued retentions",
+        string="Descargar retenciones emitidas",
         default=True,
     )
     download_retention_received = fields.Boolean(
-        string="Download received retentions",
+        string="Descargar retenciones recibidas",
         default=True,
     )
     fiel_configured = fields.Boolean(
-        string="FIEL configured",
+        string="FIEL configurada",
         compute="_compute_fiel_status",
     )
     fiel_certificate_configured = fields.Boolean(
-        string="FIEL certificate configured",
+        string="Certificado FIEL configurado",
         compute="_compute_fiel_status",
     )
     fiel_key_configured = fields.Boolean(
-        string="FIEL key configured",
+        string="Llave FIEL configurada",
         compute="_compute_fiel_status",
     )
     document_count = fields.Integer(
-        string="SAT documents",
+        string="Documentos SAT",
         compute="_compute_document_count",
     )
     download_request_count = fields.Integer(
-        string="SAT download requests",
+        string="Solicitudes de descarga SAT",
         compute="_compute_download_request_count",
     )
 

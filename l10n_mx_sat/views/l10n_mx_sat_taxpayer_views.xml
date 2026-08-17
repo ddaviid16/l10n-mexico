@@ -24,7 +24,7 @@
                     <button
                         name="action_open_fiel_wizard"
                         type="object"
-                        string="Upload FIEL credentials"
+                        string="Cargar credenciales FIEL"
                         class="btn-secondary"
                         icon="fa-key"
                         invisible="not id"
@@ -32,7 +32,7 @@
                     <button
                         name="action_test_connection"
                         type="object"
-                        string="Test connection"
+                        string="Probar conexión"
                         class="btn-secondary"
                         icon="fa-plug"
                         invisible="not fiel_configured"
@@ -40,7 +40,7 @@
                     <button
                         name="action_sync_now"
                         type="object"
-                        string="Sync now"
+                        string="Sincronizar ahora"
                         class="btn-primary"
                         icon="fa-refresh"
                         invisible="not fiel_configured"
@@ -57,7 +57,7 @@
                             <field
                                 name="document_count"
                                 widget="statinfo"
-                                string="SAT documents"
+                                string="Documentos SAT"
                             />
                         </button>
                         <button
@@ -69,13 +69,13 @@
                             <field
                                 name="download_request_count"
                                 widget="statinfo"
-                                string="Download requests"
+                                string="Solicitudes de descarga"
                             />
                         </button>
                     </div>
                     <widget
                         name="web_ribbon"
-                        title="Archived"
+                        title="Archivado"
                         bg_color="text-bg-danger"
                         invisible="active"
                     />
@@ -87,8 +87,8 @@
                         </h1>
                     </div>
                     <group>
-                        <group string="Identification">
-                            <field name="rfc" placeholder="Set by the FIEL upload" />
+                        <group string="Identificación" name="identification">
+                            <field name="rfc" placeholder="Se llena al cargar la FIEL" />
                             <field name="fiel_configured" />
                             <field
                                 name="fiel_certificate_configured"
@@ -103,7 +103,7 @@
                                 groups="base.group_multi_company"
                             />
                         </group>
-                        <group string="Synchronization">
+                        <group string="Sincronización" name="synchronization">
                             <field name="auto_download" />
                             <field name="sync_from" />
                             <field name="metadata_sync_from" />
@@ -111,7 +111,7 @@
                             <field name="last_metadata_sync" />
                         </group>
                     </group>
-                    <group string="Download types">
+                    <group string="Tipos de descarga" name="download_types">
                         <group>
                             <field name="download_cfdi_issued" />
                             <field name="download_cfdi_received" />
@@ -143,18 +143,18 @@
                 <field name="name" />
                 <field name="rfc" />
                 <filter
-                    string="Automatic download"
+                    string="Descarga automática"
                     name="auto_download"
                     domain="[('auto_download', '=', True)]"
                 />
                 <filter
-                    string="Archived"
+                    string="Archivadas"
                     name="inactive"
                     domain="[('active', '=', False)]"
                 />
                 <group>
                     <filter
-                        string="Company"
+                        string="Compañía"
                         name="group_company"
                         context="{'group_by': 'company_id'}"
                     />

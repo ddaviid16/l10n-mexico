@@ -34,7 +34,7 @@ class AccountMove(models.Model):
         copy=False,
         readonly=True,
         index="btree_not_null",
-        help="Legal entity (razón social) whose SAT download produced this bill.",
+        help="Razón social cuya descarga del SAT generó esta factura.",
     )
 
     _l10n_mx_cfdi_uuid_company_uniq = models.Constraint(
