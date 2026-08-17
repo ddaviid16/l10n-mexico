@@ -25,7 +25,7 @@ class L10nMxSatDocument(models.Model):
 
     taxpayer_id = fields.Many2one(
         comodel_name="l10n_mx_sat.taxpayer",
-        string="Taxpayer",
+        string="Razón social",
         required=True,
         readonly=True,
         index=True,

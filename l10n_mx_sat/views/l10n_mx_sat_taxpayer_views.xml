@@ -81,9 +81,9 @@
                     />
                     <field name="active" invisible="1" />
                     <div class="oe_title">
-                        <label for="name" string="Legal name" />
+                        <label for="name" string="Razón social" />
                         <h1>
-                            <field name="name" placeholder="Razon social" />
+                            <field name="name" placeholder="Razón social" />
                         </h1>
                     </div>
                     <group>
@@ -126,9 +126,9 @@
                         role="alert"
                         invisible="fiel_configured"
                     >
-                        Upload the FIEL certificate, private key and password to
-                        enable SAT downloads for this taxpayer. The RFC is read
-                        from the certificate.
+                        Sube el certificado FIEL, la llave privada y la contraseña
+                        para habilitar las descargas del SAT de esta razón social.
+                        El RFC se lee del certificado.
                     </div>
                 </sheet>
             </form>
@@ -164,18 +164,18 @@
     </record>
 
     <record id="l10n_mx_sat_taxpayer_action" model="ir.actions.act_window">
-        <field name="name">Taxpayers</field>
+        <field name="name">Razones sociales</field>
         <field name="res_model">l10n_mx_sat.taxpayer</field>
         <field name="view_mode">list,form</field>
         <field name="search_view_id" ref="l10n_mx_sat_taxpayer_view_search" />
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
-                Register a taxpayer (razon social)
+                Registra una razón social
             </p>
             <p>
-                Each taxpayer holds its own FIEL credentials and downloads
-                CFDIs from the SAT independently, without needing a separate
-                Odoo company.
+                Cada razón social guarda sus propias credenciales FIEL y
+                descarga CFDIs del SAT de forma independiente, sin necesidad
+                de crear una compañía adicional en Odoo.
             </p>
         </field>
     </record>

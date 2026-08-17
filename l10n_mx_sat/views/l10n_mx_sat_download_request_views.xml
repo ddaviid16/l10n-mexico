@@ -173,7 +173,7 @@
                 />
                 <group>
                     <filter
-                        string="Taxpayer"
+                        string="Razón social"
                         name="group_taxpayer"
                         context="{'group_by': 'taxpayer_id'}"
                     />
@@ -236,7 +236,7 @@
     />
     <menuitem
         id="menu_l10n_mx_sat_taxpayers"
-        name="Taxpayers"
+        name="Razones sociales"
         parent="menu_l10n_mx_sat_settings"
         action="l10n_mx_sat_taxpayer_action"
         sequence="10"

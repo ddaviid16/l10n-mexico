@@ -1,6 +1,6 @@
 For each legal entity (razon social) you want to download from:
 
-1. Open **SAT connection > Ajustes > Taxpayers** and create a record with
+1. Open **SAT connection > Ajustes > Razones sociales** and create a record with
    the legal name. Several taxpayers may point to the same Odoo company:
    no extra company is needed to download a different RFC.
 2. Click **Upload FIEL credentials** and upload the certificate (`.cer`),

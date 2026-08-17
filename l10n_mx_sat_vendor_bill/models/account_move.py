@@ -30,11 +30,11 @@ class AccountMove(models.Model):
     )
     l10n_mx_sat_taxpayer_id = fields.Many2one(
         comodel_name="l10n_mx_sat.taxpayer",
-        string="SAT Taxpayer",
+        string="Razón social SAT",
         copy=False,
         readonly=True,
         index="btree_not_null",
-        help="Legal entity (razon social) whose SAT download produced this bill.",
+        help="Legal entity (razón social) whose SAT download produced this bill.",
     )
 
     _l10n_mx_cfdi_uuid_company_uniq = models.Constraint(

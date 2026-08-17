@@ -134,7 +134,7 @@
                 />
                 <group>
                     <filter
-                        string="Taxpayer"
+                        string="Razón social"
                         name="group_taxpayer"
                         context="{'group_by': 'taxpayer_id'}"
                     />

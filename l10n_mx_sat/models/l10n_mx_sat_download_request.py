@@ -63,7 +63,7 @@ class L10nMxSatDownloadRequest(models.Model):
     name = fields.Char(string="Description", compute="_compute_name", store=True)
     taxpayer_id = fields.Many2one(
         comodel_name="l10n_mx_sat.taxpayer",
-        string="Taxpayer",
+        string="Razón social",
         required=True,
         index=True,
         ondelete="restrict",

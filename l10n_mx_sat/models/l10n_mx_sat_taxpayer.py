@@ -13,18 +13,18 @@ _logger = logging.getLogger(__name__)
 
 
 class L10nMxSatTaxpayer(models.Model):
-    """A legal entity (razon social) with its own FIEL credentials.
+    """A legal entity (razón social) with its own FIEL credentials.
 
     Several taxpayers can share a single Odoo company: the SAT connection is
     keyed on the RFC of the FIEL certificate, not on the Odoo company.
     """
 
     _name = "l10n_mx_sat.taxpayer"
-    _description = "SAT Taxpayer"
+    _description = "Razón social SAT"
     _order = "name"
 
     name = fields.Char(
-        string="Legal name",
+        string="Razón social",
         required=True,
         index=True,
     )
