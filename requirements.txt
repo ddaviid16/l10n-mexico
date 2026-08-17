@@ -1,3 +1,10 @@
 # generated from manifests external_dependencies
 requests-mock
 satcfdi
+# satcfdi pulls a modern cryptography (50.x), which dropped the _lib.GEN_EMAIL
+# binding that the distro pyOpenSSL 23.2.0 still uses in X509Extension. Without
+# this line pip never installs pyOpenSSL, the distro one wins on sys.path, and
+# `import OpenSSL` in base/ir_mail_server crashes before any addon is loaded.
+# Left unpinned on purpose: the resolver has to pick a pyOpenSSL/cryptography
+# pair that also satisfies satcfdi.
+pyOpenSSL
