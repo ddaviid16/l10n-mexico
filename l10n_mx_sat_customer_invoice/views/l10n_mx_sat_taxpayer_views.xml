@@ -9,7 +9,7 @@
         <field name="inherit_id" ref="l10n_mx_sat.l10n_mx_sat_taxpayer_view_form" />
         <field name="arch" type="xml">
             <xpath expr="//group[@name='download_types']" position="after">
-                <group string="Contabilidad" name="accounting_sale">
+                <group string="Contabilidad: ventas" name="accounting_sale">
                     <field name="sale_journal_id" />
                 </group>
             </xpath>

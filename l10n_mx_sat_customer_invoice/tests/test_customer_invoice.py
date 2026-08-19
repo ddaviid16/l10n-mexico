@@ -126,10 +126,15 @@ class TestCustomerInvoice(CustomerInvoiceTestCommon):
         )
 
     def test_xml_stored_as_attachment(self):
-        xml = self._cfdi_xml(uuid="aaaaaaaa-0000-0000-0000-000000000003")
+        uuid = "aaaaaaaa-0000-0000-0000-000000000003"
+        xml = self._cfdi_xml(uuid=uuid)
         move = self._create_invoice(xml)
         attachment = self.env["ir.attachment"].search(
-            [("res_model", "=", "account.move"), ("res_id", "=", move.id)],
+            [
+                ("res_model", "=", "account.move"),
+                ("res_id", "=", move.id),
+                ("name", "=", f"{uuid}.xml"),
+            ],
             limit=1,
         )
         self.assertTrue(attachment)

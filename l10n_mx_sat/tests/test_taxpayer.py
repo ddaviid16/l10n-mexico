@@ -4,9 +4,7 @@
 import base64
 from unittest.mock import MagicMock, patch
 
-from psycopg2 import IntegrityError
-
-from odoo.exceptions import UserError
+from odoo.exceptions import UserError, ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.tools import mute_logger
@@ -390,10 +388,15 @@ class TestSatTaxpayer(TransactionCase):
             self.taxpayer._get_rfc(client)
         self.assertIn("Could not determine the RFC", err.exception.args[0])
 
-    @mute_logger("odoo.sql_db")
     def test_rfc_must_be_unique(self):
-        """Two taxpayers cannot claim the same RFC, even in one company."""
-        with self.assertRaises(IntegrityError), self.env.cr.savepoint():
+        """Two taxpayers cannot claim the same RFC, even in one company.
+
+        The Python constraint fires before the SQL one so the message can name
+        the conflicting record, which record rules may be hiding.
+        """
+        with self.assertRaises(ValidationError) as err:
             self.env["l10n_mx_sat.taxpayer"].create(
                 {"name": "Duplicada", "rfc": "EKU9003173C9"}
             )
+        self.assertIn("EKU9003173C9", err.exception.args[0])
+        self.assertIn(self.taxpayer.name, err.exception.args[0])
