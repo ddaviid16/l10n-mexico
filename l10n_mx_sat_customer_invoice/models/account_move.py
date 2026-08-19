@@ -1,20 +1,37 @@
-# Copyright (C) 2026 Gray Matter Logic (<https://www.graymatterlogic.com>).
-# License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
+# Copyright 2026 Sintrix Solutions
+# License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html).
 
 import logging
 from datetime import datetime as dt
 
-from odoo import Command, fields, models
+from odoo import Command, api, fields, models
 
 _logger = logging.getLogger(__name__)
 
 CFDI_CODE_TO_TAX_TYPE = {"001": "isr", "002": "iva", "003": "ieps"}
 CFDI_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
+# Only I (ingreso) and E (egreso) map to invoices. Issued CFDIs also include
+# P (complemento de pago), N (nomina) and T (traslado), which are not sales
+# documents and must never become an account.move here.
+CFDI_INVOICE_TYPES = {"I": "out_invoice", "E": "out_refund"}
+
+RFC_FOREIGN = "XEXX010101000"
+RFC_PUBLIC = "XAXX010101000"
+GENERIC_RFC_NAMES = {
+    RFC_PUBLIC: "Público en general",
+    RFC_FOREIGN: "Residente en el extranjero",
+}
+
 
 class AccountMove(models.Model):
     _inherit = "account.move"
 
+    # These three fields are also declared by l10n_mx_sat_vendor_bill. Odoo
+    # merges identical field definitions across modules, so both add-ons can be
+    # installed together or on their own. The SQL uniqueness constraint is
+    # owned by l10n_mx_sat_vendor_bill; here the duplicate check is done in
+    # Python so this module does not depend on it.
     l10n_mx_cfdi_uuid = fields.Char(
         string="Fiscal Folio",
         copy=False,
@@ -37,21 +54,14 @@ class AccountMove(models.Model):
         help="Razón social cuya descarga del SAT generó esta factura.",
     )
 
-    # move_type is part of the key on purpose: when two of your own taxpayers
-    # invoice each other inside one Odoo company, the SAT reports the same UUID
-    # as issued for one and received for the other, so it legitimately becomes
-    # both a customer invoice and a vendor bill.
-    _l10n_mx_cfdi_uuid_company_uniq = models.Constraint(
-        "UNIQUE(l10n_mx_cfdi_uuid, company_id, move_type)",
-        "Ya existe un movimiento de este tipo con este UUID en la compañía.",
-    )
-
     # ------------------------------------------------------------------
-    # CFDI XML Parsing helpers
+    # CFDI XML parsing helpers
     # ------------------------------------------------------------------
 
-    def _l10n_mx_sat_get_tax_from_cfdi_node(self, tax_node, line, is_withholding=False):
-        """Match a CFDI tax node to an Odoo account.tax."""
+    def _l10n_mx_sat_get_sale_tax_from_cfdi_node(
+        self, tax_node, line, is_withholding=False
+    ):
+        """Match a CFDI tax node to an Odoo sale account.tax."""
         tax_code = tax_node.get("Impuesto")
         tax_type = CFDI_CODE_TO_TAX_TYPE.get(tax_code)
         tasa_o_cuota = tax_node.get("TasaOCuota")
@@ -70,7 +80,7 @@ class AccountMove(models.Model):
                 amount = float(tasa_o_cuota) * (-100 if is_withholding else 100)
             except (ValueError, TypeError):
                 _logger.warning(
-                    "Tax %s has invalid rate '%s', skipping",
+                    "Tax %s has invalid rate, skipping: %s",
                     tax_code,
                     tasa_o_cuota,
                 )
@@ -79,7 +89,7 @@ class AccountMove(models.Model):
         domain = [
             *self.env["account.tax"]._check_company_domain(line.company_id),
             ("amount", "=", amount),
-            ("type_tax_use", "=", "purchase"),
+            ("type_tax_use", "=", "sale"),
             ("amount_type", "=", "percent"),
         ]
 
@@ -97,32 +107,33 @@ class AccountMove(models.Model):
         if not taxes:
             if is_withholding:
                 msg = self.env._(
-                    "Could not find %(tax_type)s withholding tax at rate %(rate)s%%.",
+                    "Could not find %(tax_type)s sale withholding tax at "
+                    "rate %(rate)s%%.",
                     tax_type=tax_type or tax_code,
                     rate=amount,
                 )
             else:
                 msg = self.env._(
-                    "Could not find %(tax_type)s tax at rate %(rate)s%%.",
+                    "Could not find %(tax_type)s sale tax at rate %(rate)s%%.",
                     tax_type=tax_type or tax_code,
                     rate=amount,
                 )
             self.message_post(body=msg)
         return taxes[:1]
 
-    def _l10n_mx_sat_fill_invoice_line(self, concepto, line):
-        """Fill an invoice line from a CFDI Concepto node."""
+    def _l10n_mx_sat_fill_customer_invoice_line(self, concepto, line):
+        """Fill a customer invoice line from a CFDI Concepto node."""
         clave = concepto.get("ClaveProdServ", "")
         descripcion = concepto.get("Descripcion", "")
         line_name = f"[{clave}] {descripcion}" if clave else descripcion
 
         tax_ids = []
         for traslado in concepto.findall("{*}Impuestos/{*}Traslados/{*}Traslado"):
-            tax = self._l10n_mx_sat_get_tax_from_cfdi_node(traslado, line)
+            tax = self._l10n_mx_sat_get_sale_tax_from_cfdi_node(traslado, line)
             if tax:
                 tax_ids.append(tax.id)
         for retencion in concepto.findall("{*}Impuestos/{*}Retenciones/{*}Retencion"):
-            tax = self._l10n_mx_sat_get_tax_from_cfdi_node(
+            tax = self._l10n_mx_sat_get_sale_tax_from_cfdi_node(
                 retencion, line, is_withholding=True
             )
             if tax:
@@ -153,8 +164,45 @@ class AccountMove(models.Model):
             }
         )
 
-    def _l10n_mx_sat_create_bill_from_cfdi(self, tree, xml_bytes, request):
-        """Create a draft vendor bill from a parsed CFDI XML tree.
+    @api.model
+    def _l10n_mx_sat_resolve_customer(self, rfc, nombre, company):
+        """Resolve the Receptor as a partner.
+
+        Generic RFCs (general public / foreign) are funnelled into a single
+        partner each, keyed by ref. Without this, every ticket issued to the
+        general public would spawn its own contact.
+        """
+        rfc = (rfc or "").strip().upper()
+        Partner = self.env["res.partner"]
+
+        if rfc in GENERIC_RFC_NAMES:
+            partner = Partner.search([("ref", "=", rfc)], limit=1)
+            if partner:
+                return partner
+            vals = {"name": GENERIC_RFC_NAMES[rfc], "ref": rfc}
+            if rfc == RFC_PUBLIC:
+                vals["country_id"] = self.env.ref("base.mx").id
+            return Partner.create(vals)
+
+        partner = Partner._retrieve_partner(name=nombre, vat=rfc, company=company)
+        if partner:
+            return partner
+        if not nombre and not rfc:
+            return Partner
+        return Partner.create(
+            {
+                "name": nombre or rfc,
+                "vat": rfc or False,
+                "country_id": self.env.ref("base.mx").id,
+            }
+        )
+
+    def _l10n_mx_sat_create_invoice_from_cfdi(self, tree, xml_bytes, request):
+        """Create a draft customer invoice from a parsed CFDI XML tree.
+
+        Mirrors the vendor bill importer for issued CFDIs: the Receptor becomes
+        the customer and sale taxes are matched instead of purchase ones. The
+        move is always left in draft, never posted.
 
         :param tree: lxml Element of the CFDI Comprobante
         :param xml_bytes: raw XML bytes for attachment
@@ -174,18 +222,20 @@ class AccountMove(models.Model):
             _logger.warning("CFDI without UUID, skipping")
             return False
 
-        # 2. Determine move type (needed to scope the duplicate check below)
+        # 2. Determine move type before anything else: most issued CFDIs are
+        #    payment complements or payroll, which are not invoices at all.
         tipo = tree.get("TipoDeComprobante")
-        if tipo not in ("I", "E"):
+        move_type = CFDI_INVOICE_TYPES.get(tipo)
+        if not move_type:
             _logger.info(
-                "CFDI TipoDeComprobante=%s not imported as vendor bill "
+                "CFDI TipoDeComprobante=%s not imported as customer invoice "
                 "(only I and E are supported), skipping",
                 tipo,
             )
             return False
-        move_type = "in_refund" if tipo == "E" else "in_invoice"
 
-        # 3. Check duplicate
+        # 3. Check duplicate. Scoped by move_type so a CFDI issued between two
+        #    of your own taxpayers can exist as both an invoice and a bill.
         existing = self.search(
             [
                 ("l10n_mx_cfdi_uuid", "=", uuid),
@@ -202,29 +252,17 @@ class AccountMove(models.Model):
             )
             return False
 
-        # 4. Resolve partner (Emisor for purchase bills)
-        emisor = tree.find("{*}Emisor")
-        if emisor is None:
-            _logger.warning("CFDI UUID %s has no Emisor element, skipping", uuid)
+        # 4. Resolve partner (Receptor for sales)
+        receptor = tree.find("{*}Receptor")
+        if receptor is None:
+            _logger.warning("CFDI UUID %s has no Receptor element, skipping", uuid)
             return False
-        rfc = emisor.get("Rfc")
-        nombre = emisor.get("Nombre")
-
-        # Generic RFC for foreign (XEXX) and general public (XAXX) partners
-        # should not carry VAT; foreign partners skip country_id = MX.
-        rfc_foreign = "XEXX010101000"
-        rfc_public = "XAXX010101000"
-
-        partner = self.env["res.partner"]._retrieve_partner(
-            name=nombre, vat=rfc, company=company
+        partner = self._l10n_mx_sat_resolve_customer(
+            receptor.get("Rfc"), receptor.get("Nombre"), company
         )
-        if not partner and nombre:
-            partner_vals = {"name": nombre}
-            if rfc != rfc_foreign:
-                partner_vals["country_id"] = self.env.ref("base.mx").id
-            if rfc not in (rfc_foreign, rfc_public):
-                partner_vals["vat"] = rfc
-            partner = self.env["res.partner"].create(partner_vals)
+        if not partner:
+            _logger.warning("CFDI UUID %s has an unusable Receptor, skipping", uuid)
+            return False
 
         # 5. Resolve currency
         currency_name = tree.get("Moneda", "MXN")
@@ -241,16 +279,19 @@ class AccountMove(models.Model):
         if date_str:
             invoice_date = dt.strptime(date_str[:19], CFDI_DATE_FORMAT).date()
 
-        # 7. Build ref from Serie + Folio
+        # 7. Serie + Folio. These invoices were issued outside Odoo, so the
+        #    CFDI folio is the authoritative number and is kept as the move
+        #    name; ref keeps it too so it stays searchable.
         serie = tree.get("Serie", "")
         folio = tree.get("Folio", "")
         ref = f"{serie}-{folio}" if serie and folio else folio or uuid[:8]
+        invoice_name = f"{serie}{folio}" if serie or folio else False
 
-        # 8. Find purchase journal (taxpayer-specific when configured)
-        journal = taxpayer._get_purchase_journal()
+        # 8. Find sale journal (taxpayer-specific when configured)
+        journal = taxpayer._get_sale_journal()
         if not journal:
             _logger.warning(
-                "No purchase journal found for taxpayer %s (company %s)",
+                "No sale journal found for taxpayer %s (company %s)",
                 taxpayer.name,
                 company.name,
             )
@@ -276,7 +317,7 @@ class AccountMove(models.Model):
                 line = self.env["account.move.line"].create(
                     {"move_id": move.id, "company_id": company.id}
                 )
-                move._l10n_mx_sat_fill_invoice_line(concepto, line)
+                move._l10n_mx_sat_fill_customer_invoice_line(concepto, line)
 
         # 10. Store CFDI XML as attachment
         self.env["ir.attachment"].create(
@@ -289,13 +330,15 @@ class AccountMove(models.Model):
             }
         )
 
-        # 11. Write UUID directly
+        # 11. Write UUID and keep the original folio as the move number
         move.l10n_mx_cfdi_uuid = uuid
+        if invoice_name:
+            move.name = invoice_name
 
         # 12. Chatter message
         move.message_post(
             body=self.env._(
-                "Vendor bill imported from SAT Descarga Masiva. UUID: %s", uuid
+                "Customer invoice imported from SAT Descarga Masiva. UUID: %s", uuid
             ),
         )
 

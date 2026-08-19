@@ -5,6 +5,9 @@ satcfdi
 # binding that the distro pyOpenSSL 23.2.0 still uses in X509Extension. Without
 # this line pip never installs pyOpenSSL, the distro one wins on sys.path, and
 # `import OpenSSL` in base/ir_mail_server crashes before any addon is loaded.
-# Left unpinned on purpose: the resolver has to pick a pyOpenSSL/cryptography
-# pair that also satisfies satcfdi.
-pyOpenSSL
+# The >= floor is required, not cosmetic: builders run `pip install -r` without
+# --upgrade, so an unpinned pyOpenSSL counts as already satisfied by the distro
+# 23.2.0 and is silently skipped. satcfdi needs cryptography>=43.0.3, so
+# downgrading cryptography instead is not an option. Validated pairing:
+# pyOpenSSL 26.4.0 with cryptography 50.0.0.
+pyOpenSSL>=26.4

@@ -1,0 +1,6 @@
+# Copyright 2026 Sintrix Solutions
+# License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html).
+
+from . import account_move
+from . import l10n_mx_sat_taxpayer
+from . import l10n_mx_sat_document
