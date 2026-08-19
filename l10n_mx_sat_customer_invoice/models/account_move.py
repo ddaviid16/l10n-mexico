@@ -279,13 +279,13 @@ class AccountMove(models.Model):
         if date_str:
             invoice_date = dt.strptime(date_str[:19], CFDI_DATE_FORMAT).date()
 
-        # 7. Serie + Folio. These invoices were issued outside Odoo, so the
-        #    CFDI folio is the authoritative number and is kept as the move
-        #    name; ref keeps it too so it stays searchable.
+        # 7. Build ref from Serie + Folio. The move number itself is left to
+        #    the journal sequence, exactly as the vendor bill importer does:
+        #    forcing the CFDI folio into account.move.name fights Odoo's own
+        #    numbering and its gapless-sequence checks.
         serie = tree.get("Serie", "")
         folio = tree.get("Folio", "")
         ref = f"{serie}-{folio}" if serie and folio else folio or uuid[:8]
-        invoice_name = f"{serie}{folio}" if serie or folio else False
 
         # 8. Find sale journal (taxpayer-specific when configured)
         journal = taxpayer._get_sale_journal()
@@ -330,10 +330,8 @@ class AccountMove(models.Model):
             }
         )
 
-        # 11. Write UUID and keep the original folio as the move number
+        # 11. Write UUID directly
         move.l10n_mx_cfdi_uuid = uuid
-        if invoice_name:
-            move.name = invoice_name
 
         # 12. Chatter message
         move.message_post(

@@ -11,10 +11,9 @@ notes. Issued CFDIs of type `P` (complemento de pago), `N` (nomina) and `T`
 Numbering
 ---------
 
-Because these invoices were issued outside Odoo, the CFDI Serie + Folio is
-kept as the move number instead of letting the sales journal sequence assign
-one. Odoo may warn about sequence gaps when posting; that is expected when
-importing external numbering.
+The move number is assigned by the sales journal sequence, like any other
+Odoo invoice. The CFDI Serie + Folio is kept in the reference field, so the
+original number stays searchable without fighting Odoo's own numbering.
 
 Customers
 ---------

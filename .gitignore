@@ -86,3 +86,4 @@ docs/_build/
 
 # OCA rules
 !static/lib/
+l10n_mx_sat_customer_invoice/readme/USAGE.md

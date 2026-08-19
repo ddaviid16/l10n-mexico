@@ -99,7 +99,8 @@ class TestCustomerInvoice(CustomerInvoiceTestCommon):
         self.assertEqual(move.partner_id.ref, RFC_FOREIGN)
         self.assertFalse(move.partner_id.country_id)
 
-    def test_move_name_keeps_cfdi_folio(self):
+    def test_cfdi_folio_kept_in_reference(self):
+        """The folio lives in ref; numbering stays with the journal sequence."""
         move = self._create_invoice(
             self._cfdi_xml(
                 uuid="aaaaaaaa-0000-0000-0000-000000000001",
@@ -107,7 +108,6 @@ class TestCustomerInvoice(CustomerInvoiceTestCommon):
                 folio="123",
             )
         )
-        self.assertEqual(move.name, "A123")
         self.assertEqual(move.ref, "A-123")
 
     @mute_logger(_LOG)
