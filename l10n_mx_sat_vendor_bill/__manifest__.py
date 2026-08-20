@@ -3,7 +3,7 @@
 
 {
     "name": "Mexico - SAT Vendor Bill Download",
-    "version": "19.0.2.1.1",
+    "version": "19.0.2.2.0",
     "category": "Accounting/Localizations",
     "summary": "Create vendor bills from SAT received CFDIs",
     "author": "Gray Matter Logic, Odoo Community Association (OCA)",

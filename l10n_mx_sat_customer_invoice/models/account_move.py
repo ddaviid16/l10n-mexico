@@ -33,11 +33,15 @@ class AccountMove(models.Model):
     # owned by l10n_mx_sat_vendor_bill; here the duplicate check is done in
     # Python so this module does not depend on it.
     l10n_mx_cfdi_uuid = fields.Char(
-        string="Fiscal Folio",
+        string="Folio fiscal (descarga SAT)",
         copy=False,
         store=True,
         index="btree_not_null",
-        help="CFDI UUID (Folio Fiscal) from SAT.",
+        help="UUID of the CFDI as reported by the SAT bulk download. "
+        "Deliberately independent from l10n_mx_edi_cfdi_uuid, which the Odoo "
+        "Enterprise localization computes for the invoices Odoo itself "
+        "stamped: the two record different provenance and neither is derived "
+        "from the other.",
     )
     l10n_mx_sat_download_request_id = fields.Many2one(
         comodel_name="l10n_mx_sat.download.request",

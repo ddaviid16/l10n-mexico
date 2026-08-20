@@ -28,3 +28,21 @@ Known gaps
 
 A CFDI cancelled at the SAT does not yet cancel the matching invoice in Odoo.
 Check the SAT status on the `l10n_mx_sat.document` record.
+
+Coexistence with l10n_mx_edi
+---------------------------
+
+The Odoo Enterprise localization keeps its own folio fiscal in
+`l10n_mx_edi_cfdi_uuid`, computed for the invoices Odoo itself stamped. This
+module stores what the SAT reports in a separate field labelled
+**Folio fiscal (descarga SAT)**, because the two have different provenance
+and the native one cannot be written to from outside its stamping flow.
+
+The two fields stay independent on purpose. This module never reads or
+writes the native one: its uniqueness constraint covers its own field only,
+and matching across both would leave the Python check and the database
+constraint disagreeing about what counts as a duplicate.
+
+That independence is also why this module must not be installed when
+invoices are stamped from Odoo. In that setup the invoices already exist and
+nothing here would detect them.
