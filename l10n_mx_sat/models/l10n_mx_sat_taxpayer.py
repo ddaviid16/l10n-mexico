@@ -79,9 +79,12 @@ class L10nMxSatTaxpayer(models.Model):
     )
     auto_download = fields.Boolean(
         string="Descarga automática del SAT",
-        default=True,
+        default=False,
         help="Habilita la creación y el procesamiento diarios de solicitudes "
-        "de descarga masiva para esta razón social.",
+        "de descarga masiva para esta razón social. Desactivada por defecto: "
+        "mientras esté apagada, solo se envía al SAT lo que encoles a mano. "
+        "Al encenderla, la tarea diaria creará y encolará una solicitud por "
+        "cada tipo de descarga marcado, y consumirá cupo diario del RFC.",
     )
     download_cfdi_issued = fields.Boolean(
         string="Descargar CFDI emitidos",
@@ -341,6 +344,10 @@ class L10nMxSatTaxpayer(models.Model):
             )
         self._get_client()
         Request = self.env["l10n_mx_sat.download.request"]
+        # Pressing this button is the authorisation for one round: create and
+        # queue it here, because the cron only schedules new work on its own
+        # for taxpayers with automatic download enabled.
+        Request._ensure_scheduled_requests(self)
         Request._mark_taxpayer_sync_pending(self)
         Request._cron_trigger()
         return {

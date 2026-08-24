@@ -46,7 +46,13 @@ _logger = logging.getLogger(__name__)
 
 # Active states: do not recreate identical fingerprint while one is open.
 _ACTIVE_REQUEST_STATES = ("draft", "requested", "processing", "ready", "downloading")
+# States a request can run from once it has been explicitly queued.
 _IMMEDIATE_PROCESS_STATES = ("draft", "ready", "downloading")
+# States the cron may pick up on its own, without the request being queued.
+# "draft" is deliberately absent: a draft is a request the user has not
+# authorised yet, and the cron must never send it to the SAT on its own.
+_SWEEP_PROCESS_STATES = ("ready", "downloading")
+_DELETABLE_STATES = ("draft", "error")
 _WAITING_SAT_STATES = ("requested", "processing")
 _VERIFY_RETRY_MINUTES = 15
 
@@ -833,7 +839,7 @@ class L10nMxSatDownloadRequest(models.Model):
         now = fields.Datetime.now()
         domain = [
             "|",
-            ("state", "in", _IMMEDIATE_PROCESS_STATES),
+            ("state", "in", _SWEEP_PROCESS_STATES),
             "&",
             ("state", "in", _WAITING_SAT_STATES),
             "|",
@@ -898,6 +904,21 @@ class L10nMxSatDownloadRequest(models.Model):
         deferred_at = self._cron_get_next_deferred_at(pending_taxpayer_ids)
         if deferred_at:
             self._cron_trigger(at=deferred_at)
+
+    def unlink(self):
+        """Allow deleting only requests the SAT is not working on."""
+        blocked = self.filtered(lambda rec: rec.state not in _DELETABLE_STATES)
+        if blocked:
+            raise UserError(
+                self.env._(
+                    "Solo se pueden eliminar solicitudes en borrador o con "
+                    "error. Estas ya fueron enviadas al SAT: %(names)s",
+                    names=", ".join(blocked.mapped("name")),
+                )
+            )
+        # Drop them from the queue too, so a deleted draft cannot be picked up.
+        self._remove_param_ids(_QUEUED_REQUESTS_PARAM, self.ids)
+        return super().unlink()
 
     def action_queue(self):
         """Enqueue draft requests for background processing."""
@@ -1002,8 +1023,14 @@ class L10nMxSatDownloadRequest(models.Model):
             self.env["l10n_mx_sat.taxpayer"].browse(pending_taxpayer_ids).exists()
         )
 
+        # Only taxpayers with a standing authorisation get new requests here.
+        # A taxpayer stays in the pending list while it has requests in flight
+        # so the cron keeps polling the SAT for them, and without this guard
+        # that alone was enough to keep creating new rounds forever, whatever
+        # the automatic download setting said. One-off runs are created by
+        # action_sync_now instead, which is an explicit user action.
         for taxpayer in pending_taxpayers:
-            if taxpayer._has_credentials():
+            if taxpayer.auto_download and taxpayer._has_credentials():
                 self._ensure_scheduled_requests(taxpayer)
 
         requests_to_process = self._collect_pending_work(pending_taxpayers)
@@ -1071,6 +1098,11 @@ class L10nMxSatDownloadRequest(models.Model):
             req = self._create_next_request(
                 taxpayer, document_kind, direction, request_type
             )
+            if req:
+                # Scheduled requests are authorised by the taxpayer's automatic
+                # download setting, so they are queued on creation. Requests a
+                # user creates by hand stay in draft until they press Queue.
+                self._add_param_ids(_QUEUED_REQUESTS_PARAM, req.ids)
             if req and after_success:
                 _logger.info(
                     "Chained SAT request %s for taxpayer %s",

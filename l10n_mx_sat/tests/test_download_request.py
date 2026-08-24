@@ -348,6 +348,7 @@ class TestDownloadRequest(TransactionCase):
         """Manual sync must create and chain XML requests for enabled flows."""
         Request = self.env["l10n_mx_sat.download.request"]
         Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.auto_download = True
 
         client = self._mock_client()
         client.request_download.return_value = {
@@ -376,6 +377,7 @@ class TestDownloadRequest(TransactionCase):
         Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
         self.taxpayer.write(
             {
+                "auto_download": True,
                 "download_cfdi_issued": True,
                 "download_cfdi_received": False,
                 "download_retention_issued": False,
@@ -962,8 +964,8 @@ class TestDownloadRequest(TransactionCase):
         )
         Request._write_param_ids("l10n_mx_sat.queued_request_ids", [req2.id, 999999])
         work = Request._collect_pending_work(self.taxpayer)
-        self.assertEqual(work.ids[0], req2.id)
-        self.assertIn(req1.id, work.ids)
+        self.assertEqual(work.ids, [req2.id], "only queued drafts may be processed")
+        self.assertNotIn(req1.id, work.ids)
 
     def test_cron_has_immediate_work(self):
         Request = self.env["l10n_mx_sat.download.request"]
@@ -972,7 +974,10 @@ class TestDownloadRequest(TransactionCase):
         Request._write_param_ids("l10n_mx_sat.queued_request_ids", [req.id])
         self.assertTrue(Request._cron_has_immediate_work([]))
         Request._write_param_ids("l10n_mx_sat.queued_request_ids", [])
-        self.assertTrue(Request._cron_has_immediate_work([self.taxpayer.id]))
+        self.assertFalse(
+            Request._cron_has_immediate_work([self.taxpayer.id]),
+            "an un-queued draft is not work the cron may take on its own",
+        )
         req.write(
             {
                 "state": "processing",
@@ -981,6 +986,82 @@ class TestDownloadRequest(TransactionCase):
             }
         )
         self.assertFalse(Request._cron_has_immediate_work([self.taxpayer.id]))
+
+    def test_unqueued_draft_is_never_sent_to_sat(self):
+        """A draft the user never queued must not reach the SAT."""
+        Request = self.env["l10n_mx_sat.download.request"]
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.auto_download = False
+        draft = self._create_request()
+        client = self._mock_client()
+        with (
+            self._patch_factory(client),
+            patch.object(type(Request), "_cron_trigger"),
+        ):
+            Request._cron_process_requests(taxpayers=self.taxpayer)
+        self.assertEqual(draft.state, "draft")
+        client.request_download.assert_not_called()
+
+    def test_cron_creates_nothing_when_auto_download_is_off(self):
+        """A taxpayer in flight must not keep spawning rounds by itself.
+
+        Requests in flight keep the taxpayer in the pending list so the cron
+        can poll the SAT, and that alone used to be enough to keep creating
+        new rounds regardless of the automatic download setting.
+        """
+        Request = self.env["l10n_mx_sat.download.request"]
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.auto_download = False
+        in_flight = self._create_request(
+            state="processing", sat_request_id="SOL-INFLIGHT"
+        )
+        Request._mark_taxpayer_sync_pending(self.taxpayer)
+        with patch.object(type(Request), "_cron_trigger"):
+            Request._cron_process_requests()
+        others = Request.search(
+            [("taxpayer_id", "=", self.taxpayer.id), ("id", "!=", in_flight.id)]
+        )
+        self.assertFalse(others, "no new rounds may be created with auto off")
+
+    def test_sync_now_creates_its_round_with_auto_download_off(self):
+        """The button is the authorisation for one round, on its own."""
+        Request = self.env["l10n_mx_sat.download.request"]
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.write({"auto_download": False, "sync_from": "2026-01-01"})
+        client = self._mock_client()
+        with (
+            self._patch_factory(client),
+            patch.object(type(Request), "_cron_trigger"),
+        ):
+            self.taxpayer.action_sync_now()
+        self.assertTrue(
+            Request.search([("taxpayer_id", "=", self.taxpayer.id)]),
+            "Sync now must still work when automatic download is off",
+        )
+
+    def test_draft_can_be_deleted_and_leaves_the_queue(self):
+        Request = self.env["l10n_mx_sat.download.request"]
+        draft = self._create_request()
+        draft.action_queue()
+        draft_id = draft.id
+        self.assertIn(
+            draft_id, Request._parse_param_ids("l10n_mx_sat.queued_request_ids")
+        )
+        draft.unlink()
+        self.assertNotIn(
+            draft_id,
+            Request._parse_param_ids("l10n_mx_sat.queued_request_ids"),
+            "a deleted draft must not stay queued",
+        )
+
+    def test_cannot_delete_request_already_sent_to_sat(self):
+        req = self._create_request(state="requested", sat_request_id="SOL-DEL")
+        with self.assertRaises(UserError):
+            req.unlink()
+
+    def test_error_request_can_be_deleted(self):
+        req = self._create_request(state="error", error_message="fallo")
+        self.assertTrue(req.unlink())
 
     def test_refresh_pending_taxpayers_keeps_active(self):
         Request = self.env["l10n_mx_sat.download.request"]
@@ -1028,7 +1109,9 @@ class TestDownloadRequest(TransactionCase):
         processed = Request.search(
             [("taxpayer_id", "=", self.taxpayer.id), ("state", "!=", "draft")]
         )
-        self.assertEqual(len(processed), 4)
+        # The two hand-made drafts stay untouched; only the three the cron
+        # created and queued for the remaining flows are processed.
+        self.assertEqual(len(processed), 3)
         mock_trigger.assert_called_once_with()
 
     def test_cron_processing_defers_trigger(self):

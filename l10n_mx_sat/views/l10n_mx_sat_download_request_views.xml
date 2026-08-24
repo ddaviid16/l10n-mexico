@@ -4,7 +4,7 @@
         <field name="name">l10n_mx_sat.download.request.list</field>
         <field name="model">l10n_mx_sat.download.request</field>
         <field name="arch" type="xml">
-            <list delete="0">
+            <list>
                 <field name="name" readonly="1" />
                 <field name="taxpayer_id" readonly="1" />
                 <field
@@ -35,7 +35,7 @@
         <field name="name">l10n_mx_sat.download.request.form</field>
         <field name="model">l10n_mx_sat.download.request</field>
         <field name="arch" type="xml">
-            <form delete="0">
+            <form>
                 <header>
                     <button
                         name="action_queue"
