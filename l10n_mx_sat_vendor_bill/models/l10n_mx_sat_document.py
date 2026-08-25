@@ -14,6 +14,13 @@ class L10nMxSatDocument(models.Model):
         copy=False,
     )
 
+    def _get_invoice_total(self):
+        """Report the total of the bill this CFDI produced, if any."""
+        self.ensure_one()
+        if self.vendor_bill_id:
+            return (True, self.vendor_bill_id.amount_total)
+        return super()._get_invoice_total()
+
     @api.model
     def _upsert_from_xml(self, tree, xml_bytes, taxpayer, request):
         document = super()._upsert_from_xml(tree, xml_bytes, taxpayer, request)
@@ -30,4 +37,5 @@ class L10nMxSatDocument(models.Model):
         )
         if move:
             document._sat_write({"vendor_bill_id": move.id})
+            document._refresh_total_mismatch()
         return document

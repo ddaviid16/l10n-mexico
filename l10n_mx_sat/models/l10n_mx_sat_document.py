@@ -16,6 +16,9 @@ _logger = logging.getLogger(__name__)
 
 CFDI_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
+# A cent. Below this, the gap is float noise, not a real accounting difference.
+_TOTAL_TOLERANCE = 0.01
+
 
 class L10nMxSatDocument(models.Model):
     _name = "l10n_mx_sat.document"
@@ -97,6 +100,27 @@ class L10nMxSatDocument(models.Model):
     display_name = fields.Char(
         compute="_compute_display_name", store=True, readonly=True
     )
+    invoice_total = fields.Float(
+        string="Total en Odoo",
+        digits=(16, 6),
+        readonly=True,
+        help="Total del documento contable que se generó a partir de este CFDI. "
+        "Se toma al importar y se refresca con el botón Recalcular descuadre.",
+    )
+    total_difference = fields.Float(
+        string="Diferencia",
+        digits=(16, 6),
+        readonly=True,
+        help="Total en Odoo menos el total que declara el CFDI. "
+        "Positiva significa que Odoo quedó por encima del SAT.",
+    )
+    total_mismatch = fields.Boolean(
+        string="Descuadre",
+        readonly=True,
+        index=True,
+        help="El documento contable generado no coincide con el total que "
+        "declara el CFDI. Revísalo antes de publicarlo.",
+    )
 
     _uuid_taxpayer_kind_direction_uniq = models.Constraint(
         "UNIQUE(uuid, taxpayer_id, document_kind, direction)",
@@ -115,6 +139,51 @@ class L10nMxSatDocument(models.Model):
             if doc.direction:
                 parts.append(direction_labels.get(doc.direction, doc.direction))
             doc.display_name = " / ".join(parts)
+
+    def _get_invoice_total(self):
+        """Total of the accounting document built from this CFDI.
+
+        Returns (has_invoice, total). The boolean matters on its own: an
+        invoice that legitimately totals zero is not the same as no invoice
+        at all, and only the former is a mismatch worth reporting.
+
+        Modules that turn CFDIs into invoices override this.
+        """
+        self.ensure_one()
+        return (False, 0.0)
+
+    def _refresh_total_mismatch(self):
+        """Recompare each document against the invoice it produced."""
+        for document in self:
+            has_invoice, invoice_total = document._get_invoice_total()
+            difference = invoice_total - (document.total or 0.0)
+            document._sat_write(
+                {
+                    "invoice_total": invoice_total,
+                    "total_difference": difference,
+                    "total_mismatch": (
+                        has_invoice and abs(difference) >= _TOTAL_TOLERANCE
+                    ),
+                }
+            )
+
+    def action_recompute_total_mismatch(self):
+        """Button: recheck the selected documents against their invoices."""
+        self._refresh_total_mismatch()
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": self.env._("Descuadre recalculado"),
+                "message": self.env._(
+                    "%(mismatched)s de %(total)s documentos no cuadran contra su CFDI.",
+                    mismatched=len(self.filtered("total_mismatch")),
+                    total=len(self),
+                ),
+                "type": "warning" if self.filtered("total_mismatch") else "success",
+                "sticky": False,
+            },
+        }
 
     @api.model
     def _sat_document_readonly_message(self):

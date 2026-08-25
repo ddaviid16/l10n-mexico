@@ -19,7 +19,24 @@
                 <field name="issuer_rfc" readonly="1" />
                 <field name="receiver_rfc" readonly="1" />
                 <field name="issue_date" readonly="1" />
-                <field name="total" readonly="1" />
+                <field name="total" readonly="1" string="Total CFDI" />
+                <field
+                    name="invoice_total"
+                    readonly="1"
+                    optional="hide"
+                />
+                <field
+                    name="total_difference"
+                    readonly="1"
+                    optional="show"
+                    decoration-danger="total_mismatch"
+                />
+                <field
+                    name="total_mismatch"
+                    readonly="1"
+                    widget="boolean_toggle"
+                    optional="show"
+                />
                 <field name="has_xml" readonly="1" />
             </list>
         </field>
@@ -31,6 +48,13 @@
         <field name="arch" type="xml">
             <form create="0" edit="0" delete="0">
                 <header>
+                    <button
+                        name="action_recompute_total_mismatch"
+                        type="object"
+                        string="Recalcular descuadre"
+                        class="btn-secondary"
+                        icon="fa-calculator"
+                    />
                     <button
                         name="action_download_xml"
                         type="object"
@@ -62,7 +86,10 @@
                             <field name="issue_date" readonly="1" />
                             <field name="stamp_date" readonly="1" />
                             <field name="cancellation_date" readonly="1" />
-                            <field name="total" readonly="1" />
+                            <field name="total" readonly="1" string="Total CFDI" />
+                            <field name="invoice_total" readonly="1" />
+                            <field name="total_difference" readonly="1" />
+                            <field name="total_mismatch" readonly="1" />
                             <field name="currency_code" readonly="1" />
                             <field name="series" readonly="1" />
                             <field name="folio_number" readonly="1" />
@@ -100,6 +127,17 @@
                     name="in_progress"
                     domain="[('sat_status', '=', 'in_progress')]"
                 />
+                <filter
+                    string="Con descuadre"
+                    name="total_mismatch"
+                    domain="[('total_mismatch', '=', True)]"
+                />
+                <filter
+                    string="Sin descuadre"
+                    name="no_total_mismatch"
+                    domain="[('total_mismatch', '=', False)]"
+                />
+                <separator />
                 <filter
                     string="With XML"
                     name="has_xml"
@@ -145,6 +183,11 @@
                         groups="base.group_multi_company"
                     />
                     <filter
+                        string="Descuadre"
+                        name="group_mismatch"
+                        context="{'group_by': 'total_mismatch'}"
+                    />
+                    <filter
                         string="SAT status"
                         name="group_status"
                         context="{'group_by': 'sat_status'}"
@@ -167,6 +210,16 @@
                 </group>
             </search>
         </field>
+    </record>
+
+    <record id="action_recompute_total_mismatch" model="ir.actions.server">
+        <field name="name">Recalcular descuadre</field>
+        <field name="model_id" ref="model_l10n_mx_sat_document" />
+        <field name="binding_model_id" ref="model_l10n_mx_sat_document" />
+        <field name="binding_view_types">list,form</field>
+        <field name="groups_id" eval="[(4, ref('l10n_mx_sat.group_sat_manager'))]" />
+        <field name="state">code</field>
+        <field name="code">action = records.action_recompute_total_mismatch()</field>
     </record>
 
     <record id="l10n_mx_sat_document_action" model="ir.actions.act_window">
