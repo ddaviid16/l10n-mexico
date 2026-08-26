@@ -361,6 +361,19 @@ class TestDownloadRequest(TransactionCase):
             "sat_request_id": "SOL-MANUAL",
             "message": "Solicitud aceptada",
         }
+        # Pin the SAT verification response. Left unset, the MagicMock reaches
+        # the "invalid EstadoSolicitud" branch and its repr -- memory address
+        # included -- lands in error_message. _ensure_scheduled_requests then
+        # substring-searches that message for "5002", so whether the next round
+        # got scheduled depended on the mock's address.
+        client.verify_download.return_value = {
+            "cod_estatus": SAT_CODE_SUCCESS,
+            "request_status": 0,
+            "request_status_code": "",
+            "reported_cfdi_count": 0,
+            "packages": [],
+            "message": "EstadoSolicitud invalido",
+        }
         with self._patch_factory(client):
             Request.with_context(
                 l10n_mx_sat_manual_sync=True,
@@ -395,6 +408,19 @@ class TestDownloadRequest(TransactionCase):
             "cod_estatus": SAT_CODE_SUCCESS,
             "sat_request_id": "SOL-FLAG",
             "message": "Solicitud aceptada",
+        }
+        # Pin the SAT verification response. Left unset, the MagicMock reaches
+        # the "invalid EstadoSolicitud" branch and its repr -- memory address
+        # included -- lands in error_message. _ensure_scheduled_requests then
+        # substring-searches that message for "5002", so whether the next round
+        # got scheduled depended on the mock's address.
+        client.verify_download.return_value = {
+            "cod_estatus": SAT_CODE_SUCCESS,
+            "request_status": 0,
+            "request_status_code": "",
+            "reported_cfdi_count": 0,
+            "packages": [],
+            "message": "EstadoSolicitud invalido",
         }
         with self._patch_factory(client):
             Request.with_context(
