@@ -4,3 +4,4 @@
 from . import test_cfdi_parser
 from . import test_document_hook
 from . import test_edge_cases
+from . import test_total_mismatch

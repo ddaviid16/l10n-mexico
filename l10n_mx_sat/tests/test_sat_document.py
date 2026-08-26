@@ -534,6 +534,39 @@ class TestSatDocument(TransactionCase):
         doc._compute_display_name()
         self.assertEqual(doc.display_name, "DISP-NAME-UUID-12345678901234567890")
 
+    def test_base_reports_no_invoice(self):
+        """Without an accounting module installed nothing can mismatch."""
+        doc = self.Document._sat_create(
+            [
+                {
+                    "taxpayer_id": self.taxpayer.id,
+                    "uuid": "NO-INVOICE-HOOK-UUID",
+                    "document_kind": "cfdi",
+                    "direction": "received",
+                }
+            ]
+        )
+        self.assertEqual(doc._get_invoice_total(), (False, 0.0))
+        doc._refresh_total_mismatch()
+        self.assertFalse(doc.total_mismatch)
+
+    def test_recompute_mismatch_requires_manager(self):
+        """The recompute writes through sudo, so the ACL alone would not stop it."""
+        doc = self.Document._sat_create(
+            [
+                {
+                    "taxpayer_id": self.taxpayer.id,
+                    "uuid": "MISMATCH-GUARD-UUID",
+                    "document_kind": "cfdi",
+                    "direction": "received",
+                }
+            ]
+        )
+        manager = self.env.ref("l10n_mx_sat.group_sat_manager")
+        self.env.user.group_ids = [(3, manager.id)]
+        with self.assertRaises(AccessError):
+            doc.action_recompute_total_mismatch()
+
     def test_manual_api_returns_after_check_patched(self):
         with patch.object(
             type(self.Document), "_check_not_manual_update", lambda self: None

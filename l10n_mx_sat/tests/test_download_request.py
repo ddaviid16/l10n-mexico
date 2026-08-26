@@ -1079,6 +1079,7 @@ class TestDownloadRequest(TransactionCase):
     def test_cron_process_requests_batch_size_one(self):
         Request = self.env["l10n_mx_sat.download.request"]
         Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        self.taxpayer.auto_download = True
         self._create_request(
             date_from="2026-05-01 00:00:00",
             date_to="2026-05-15 23:59:59",
@@ -1191,6 +1192,7 @@ class TestDownloadRequest(TransactionCase):
     def test_cron_process_requests_handles_exception(self):
         Request = self.env["l10n_mx_sat.download.request"]
         req = self._create_request()
+        req.action_queue()
         client = self._mock_client()
         client.authenticate.side_effect = Exception("Auth failed")
         with self._patch_factory(client), patch.object(type(Request), "_cron_trigger"):

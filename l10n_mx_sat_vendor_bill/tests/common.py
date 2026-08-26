@@ -79,6 +79,7 @@ class VendorBillTestCommon(TransactionCase):
         moneda="MXN",
         emisor_rfc=EMISOR_RFC,
         emisor_nombre=EMISOR_NAME,
+        total="1650.00",
         include_emisor=True,
         include_tfd=True,
         tfd_uuid=None,
@@ -127,7 +128,7 @@ class VendorBillTestCommon(TransactionCase):
     Version="4.0"{serie_attr}{folio_attr}
     Fecha="{fecha}"
     FormaPago="04" SubTotal="1422.41" Descuento="0.00"
-    Moneda="{moneda}" Total="1650.00" TipoDeComprobante="{tipo}"
+    Moneda="{moneda}" Total="{total}" TipoDeComprobante="{tipo}"
     MetodoPago="PUE" Exportacion="01" LugarExpedicion="06600">
     {emisor}
     <cfdi:Receptor Rfc="{RECEPTOR_RFC}"

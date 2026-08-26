@@ -5,7 +5,6 @@ from odoo.tests import tagged
 from odoo.tools import mute_logger
 
 from .common import (
-    RECEPTOR_NAME,
     RECEPTOR_RFC,
     RFC_FOREIGN,
     RFC_PUBLIC,
@@ -62,10 +61,16 @@ class TestCustomerInvoice(CustomerInvoiceTestCommon):
         self.assertFalse(self._create_invoice(xml))
 
     def test_partner_resolved_from_receptor(self):
+        """The customer is resolved by RFC.
+
+        Only the RFC is asserted: when a contact with that RFC already exists
+        the module must reuse it instead of creating a duplicate, so its name
+        is whatever the database already had, not what the CFDI says.
+        """
         move = self._create_invoice(
             self._cfdi_xml(uuid="66666666-6666-6666-6666-666666666666")
         )
-        self.assertEqual(move.partner_id.name, RECEPTOR_NAME)
+        self.assertTrue(move.partner_id)
         self.assertEqual(move.partner_id.vat, RECEPTOR_RFC)
 
     def test_generic_public_rfc_reuses_one_partner(self):
@@ -153,6 +158,30 @@ class TestCustomerInvoice(CustomerInvoiceTestCommon):
         self.assertTrue(document)
         self.assertTrue(document.customer_invoice_id)
         self.assertEqual(document.customer_invoice_id.move_type, "out_invoice")
+
+    def test_declared_total_below_odoo_is_flagged(self):
+        """Same gate as on the vendor side, for issued CFDIs."""
+        xml = self._cfdi_xml(uuid="mismatch-1111-2222-3333-444455556666", total="1.00")
+        document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
+            self._parse(xml), xml, self.taxpayer, self.request
+        )
+        self.assertTrue(document.customer_invoice_id)
+        self.assertEqual(document.total, 1.00)
+        self.assertEqual(
+            document.invoice_total, document.customer_invoice_id.amount_total
+        )
+        self.assertTrue(document.total_mismatch)
+
+    @mute_logger(_LOG)
+    def test_payment_complement_cannot_mismatch(self):
+        """No invoice, no comparison: tipo P must stay unflagged."""
+        xml = self._cfdi_xml(uuid="mismatch-2222-2222-3333-444455556666", tipo="P")
+        document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
+            self._parse(xml), xml, self.taxpayer, self.request
+        )
+        self.assertTrue(document)
+        self.assertFalse(document.customer_invoice_id)
+        self.assertFalse(document.total_mismatch)
 
     def test_document_hook_ignores_received_direction(self):
         received = self.env["l10n_mx_sat.download.request"].create(

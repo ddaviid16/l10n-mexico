@@ -5,7 +5,7 @@ import base64
 import logging
 
 from odoo import api, fields, models
-from odoo.exceptions import UserError, ValidationError
+from odoo.exceptions import UserError
 
 from ..services import SatClient
 
@@ -129,40 +129,6 @@ class L10nMxSatTaxpayer(models.Model):
         "sociales archivadas y las de otras compañías: la restricción aplica "
         "a todos los registros, aunque la lista no los muestre.",
     )
-
-    @api.constrains("rfc")
-    def _check_rfc_unique(self):
-        """Report RFC collisions the SQL constraint cannot explain.
-
-        The unique index is global, but record rules and the active filter can
-        hide the conflicting taxpayer from the user, leaving them staring at a
-        list with no visible duplicate. Search as sudo across companies and
-        archived records so the error can name the culprit.
-        """
-        for taxpayer in self:
-            if not taxpayer.rfc:
-                continue
-            duplicate = (
-                self.sudo()
-                .with_context(active_test=False)
-                .search(
-                    [("rfc", "=", taxpayer.rfc), ("id", "!=", taxpayer.id)],
-                    limit=1,
-                )
-            )
-            if not duplicate:
-                continue
-            raise ValidationError(
-                self.env._(
-                    'El RFC %(rfc)s ya está asignado a la razón social "%(name)s"'
-                    " (compañía: %(company)s%(archived)s). Usa ese registro en "
-                    "lugar de crear otro: los CFDI descargados cuelgan de él.",
-                    rfc=taxpayer.rfc,
-                    name=duplicate.name,
-                    company=duplicate.company_id.display_name,
-                    archived="" if duplicate.active else self.env._(", archivada"),
-                )
-            )
 
     @api.depends("name", "rfc")
     def _compute_display_name(self):

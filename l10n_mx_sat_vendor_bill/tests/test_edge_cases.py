@@ -1,6 +1,8 @@
 # Copyright (C) 2026 Gray Matter Logic (<https://www.graymatterlogic.com>).
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
+from unittest.mock import patch
+
 from odoo.tests import tagged
 from odoo.tools import mute_logger
 
@@ -32,17 +34,20 @@ class TestCfdiParserEdgeCases(VendorBillTestCommon):
 
     @mute_logger("odoo.addons.l10n_mx_sat_vendor_bill.models.account_move")
     def test_no_purchase_journal_skipped(self):
-        journals = self.env["account.journal"].search(
-            [("type", "=", "purchase"), ("company_id", "=", self.company.id)]
-        )
-        journals.write({"active": False})
-        try:
+        """Simulate the absence of a purchase journal without archiving one.
+
+        Archiving the real journals fails on any database that already has
+        draft entries in them, which is every database with actual data.
+        """
+        with patch.object(
+            type(self.taxpayer),
+            "_get_purchase_journal",
+            return_value=self.env["account.journal"],
+        ):
             move = self._create_bill(
                 self._cfdi_xml(uuid="no-journal-1111-2222-3333-444455556666")
             )
-            self.assertFalse(move)
-        finally:
-            journals.write({"active": True})
+        self.assertFalse(move)
 
     def test_foreign_partner_skips_vat_and_mx_country(self):
         # Exercise the create path (demo/base data may already have generic RFCs).

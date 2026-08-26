@@ -3,7 +3,7 @@
 
 {
     "name": "Mexico - SAT Customer Invoice Download",
-    "version": "19.0.1.2.0",
+    "version": "19.0.1.2.2",
     "category": "Accounting/Localizations",
     "summary": "Create draft customer invoices from SAT issued CFDIs",
     "author": "Sintrix Solutions, Odoo Community Association (OCA)",
