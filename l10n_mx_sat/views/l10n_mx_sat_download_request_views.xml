@@ -96,6 +96,10 @@
                             <field name="sat_request_id" />
                             <field name="reported_cfdi_count" />
                             <field name="document_count" />
+                            <field
+                                name="failed_document_count"
+                                invisible="not failed_document_count"
+                            />
                             <field name="request_fingerprint" />
                             <field name="next_process_at" />
                             <field name="can_retry" invisible="1" />
@@ -103,6 +107,12 @@
                     </group>
                     <group string="Error" invisible="not error_message">
                         <field name="error_message" nolabel="1" colspan="2" />
+                    </group>
+                    <group
+                        string="Documentos que no se pudieron importar"
+                        invisible="not failure_details"
+                    >
+                        <field name="failure_details" nolabel="1" colspan="2" />
                     </group>
                     <notebook>
                         <page string="Packages" name="packages">

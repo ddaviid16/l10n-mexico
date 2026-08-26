@@ -59,6 +59,8 @@ _VERIFY_RETRY_MINUTES = 15
 _SYNC_PENDING_PARAM = "l10n_mx_sat.sync_pending_taxpayer_ids"
 _QUEUED_REQUESTS_PARAM = "l10n_mx_sat.queued_request_ids"
 _CRON_BATCH_SIZE = 4  # 0 = unlimited (tests)
+# Per-document failures shown on the request; the rest stay in the server log.
+_MAX_FAILURE_DETAILS = 20
 
 
 class L10nMxSatDownloadRequest(models.Model):
@@ -156,6 +158,16 @@ class L10nMxSatDownloadRequest(models.Model):
     )
     document_count = fields.Integer(string="Processed documents", readonly=True)
     reported_cfdi_count = fields.Integer(string="SAT reported CFDIs", readonly=True)
+    failed_document_count = fields.Integer(
+        string="Documentos con error",
+        readonly=True,
+        help="Documentos del paquete que no se pudieron importar. El resto sí "
+        "se importó: un CFDI defectuoso ya no cuesta el paquete completo.",
+    )
+    failure_details = fields.Text(
+        string="Detalle de documentos con error",
+        readonly=True,
+    )
     can_retry = fields.Boolean(
         string="Can retry",
         compute="_compute_can_retry",
@@ -283,6 +295,8 @@ class L10nMxSatDownloadRequest(models.Model):
                 "state": "done",
                 "document_count": 0,
                 "reported_cfdi_count": 0,
+                "failed_document_count": 0,
+                "failure_details": False,
                 "error_message": False,
                 "next_process_at": False,
             }
@@ -396,6 +410,8 @@ class L10nMxSatDownloadRequest(models.Model):
                 {
                     "state": "done",
                     "document_count": 0,
+                    "failed_document_count": 0,
+                    "failure_details": False,
                     "error_message": False,
                     "next_process_at": False,
                 }
@@ -632,7 +648,14 @@ class L10nMxSatDownloadRequest(models.Model):
             )
 
         target_state = self._get_retry_target_state()
-        self.write({"state": target_state, "error_message": False})
+        self.write(
+            {
+                "state": target_state,
+                "error_message": False,
+                "failed_document_count": 0,
+                "failure_details": False,
+            }
+        )
 
         try:
             with self.env.cr.savepoint():
@@ -681,49 +704,69 @@ class L10nMxSatDownloadRequest(models.Model):
         documents = self.env["l10n_mx_sat.document"]
         document_count = 0
 
+        failed_count = 0
+        failure_details = []
+
         for package in self.package_ids.filtered(lambda p: p.state == "pending"):
+            proc = None
             try:
-                result = client.download_package(
-                    token,
-                    rfc,
-                    package.sat_package_id,
-                    document_kind=self.document_kind,
-                )
-                cod_estatus = sat_str(result.get("cod_estatus"))
-                package_b64 = result.get("package_b64", "")
+                with self.env.cr.savepoint():
+                    result = client.download_package(
+                        token,
+                        rfc,
+                        package.sat_package_id,
+                        document_kind=self.document_kind,
+                    )
+                    cod_estatus = sat_str(result.get("cod_estatus"))
+                    package_b64 = result.get("package_b64", "")
 
-                if cod_estatus in (SAT_DOWNLOAD_EXPIRED, SAT_DOWNLOAD_MAX_REACHED):
-                    package.write({"state": "error"})
-                    continue
-                if cod_estatus != SAT_CODE_SUCCESS or not package_b64:
-                    package.write({"state": "error"})
-                    continue
-
-                proc = self._process_package(package_b64, taxpayer)
+                    if cod_estatus in (SAT_DOWNLOAD_EXPIRED, SAT_DOWNLOAD_MAX_REACHED):
+                        package.write({"state": "error"})
+                    elif cod_estatus != SAT_CODE_SUCCESS or not package_b64:
+                        package.write({"state": "error"})
+                    else:
+                        proc = self._process_package(package_b64, taxpayer)
+                        package.write({"state": "processed"})
+            except Exception:
+                _logger.exception("Error processing package %s", package.sat_package_id)
+                # The savepoint rolled the failed package back, so the cursor
+                # is usable again and this write can actually land. Without it
+                # a database error left the transaction aborted and this very
+                # line raised again, taking the whole request down with it.
+                self.env.invalidate_all()
+                package.write({"state": "error"})
+                continue
+            if proc:
                 documents |= proc["documents"]
                 document_count += proc["processed"]
-                package.write({"state": "processed"})
-            except Exception:
-                package.write({"state": "error"})
-                _logger.exception("Error processing package %s", package.sat_package_id)
+                failed_count += proc["failed"]
+                failure_details.extend(proc["failures"])
 
         all_error = self.package_ids and all(
             p.state == "error" for p in self.package_ids
         )
+        failure_summary = self._format_failure_details(failure_details)
         if all_error:
             self.write(
                 {
                     "state": "error",
                     "document_count": document_count,
+                    "failed_document_count": failed_count,
+                    "failure_details": failure_summary,
                     "error_message": self.env._("All packages failed."),
                     "next_process_at": False,
                 }
             )
         else:
+            # Documents did arrive, so the request is done even if some CFDIs
+            # failed. Those are reported on their own fields instead of
+            # discarding everything the package delivered.
             self.write(
                 {
                     "state": "done",
                     "document_count": document_count,
+                    "failed_document_count": failed_count,
+                    "failure_details": failure_summary,
                     "error_message": False,
                     "next_process_at": False,
                 }
@@ -741,9 +784,17 @@ class L10nMxSatDownloadRequest(models.Model):
     _ZIP_MAX_FILES = 10_000
 
     def _process_package(self, package_b64, taxpayer):
-        """Extract ZIP and process XML or metadata files."""
-        documents = self.env["l10n_mx_sat.document"]
+        """Extract ZIP and process XML or metadata files.
+
+        Every document is imported inside its own savepoint. A SAT package can
+        hold thousands of CFDIs, and without that isolation a single defective
+        one would cost the whole package: a database error aborts the running
+        transaction, so a bare try/except cannot recover from it.
+        """
+        Document = self.env["l10n_mx_sat.document"]
+        documents = Document
         processed = 0
+        failures = []
 
         zip_data = base64.b64decode(package_b64)
         with zipfile.ZipFile(BytesIO(zip_data)) as zf:
@@ -751,7 +802,12 @@ class L10nMxSatDownloadRequest(models.Model):
             file_count = len(zf.namelist())
             if total_size > self._ZIP_MAX_SIZE or file_count > self._ZIP_MAX_FILES:
                 _logger.warning("ZIP bomb guard triggered")
-                return {"documents": documents, "processed": 0}
+                return {
+                    "documents": documents,
+                    "processed": 0,
+                    "failed": 0,
+                    "failures": [],
+                }
 
             for filename in zf.namelist():
                 lower = filename.lower()
@@ -760,26 +816,72 @@ class L10nMxSatDownloadRequest(models.Model):
                     if not lower.endswith((".txt", ".csv")):
                         continue
                     rows = parse_metadata_content(content)
-                    for row in rows:
-                        doc = self.env[
-                            "l10n_mx_sat.document"
-                        ]._upsert_from_metadata_row(row, taxpayer, self)
+                    for index, row in enumerate(rows, start=1):
+                        label = f"{filename} #{index}"
+                        try:
+                            with self.env.cr.savepoint():
+                                doc = Document._upsert_from_metadata_row(
+                                    row, taxpayer, self
+                                )
+                        except Exception as exc:
+                            _logger.exception("Error importing metadata row %s", label)
+                            failures.append((label, str(exc)))
+                            # The rollback undid the writes but not the ORM
+                            # cache, which would otherwise serve values the
+                            # database no longer holds.
+                            self.env.invalidate_all()
+                            continue
                         if doc:
                             documents |= doc
                             processed += 1
                 elif lower.endswith(".xml"):
                     try:
                         tree = etree.fromstring(content, SAFE_XML_PARSER)
-                    except etree.XMLSyntaxError:
+                    except etree.XMLSyntaxError as exc:
+                        # Counted, not silently dropped: an unreadable CFDI is
+                        # a document the SAT has and Odoo does not.
+                        _logger.warning("Malformed XML in %s: %s", filename, exc)
+                        failures.append((filename, str(exc)))
                         continue
-                    doc = self.env["l10n_mx_sat.document"]._upsert_from_xml(
-                        tree, content, taxpayer, self
-                    )
+                    try:
+                        with self.env.cr.savepoint():
+                            doc = Document._upsert_from_xml(
+                                tree, content, taxpayer, self
+                            )
+                    except Exception as exc:
+                        _logger.exception("Error importing CFDI from %s", filename)
+                        failures.append((filename, str(exc)))
+                        self.env.invalidate_all()
+                        continue
                     if doc:
                         documents |= doc
                         processed += 1
 
-        return {"documents": documents, "processed": processed}
+        return {
+            "documents": documents,
+            "processed": processed,
+            "failed": len(failures),
+            "failures": failures,
+        }
+
+    @api.model
+    def _format_failure_details(self, failures):
+        """Render a bounded, readable list of per-document import failures."""
+        if not failures:
+            return False
+        lines = [
+            f"{label}: {reason}" for label, reason in failures[:_MAX_FAILURE_DETAILS]
+        ]
+        remaining = len(failures) - len(lines)
+        if remaining > 0:
+            lines.append(
+                self.env._(
+                    "... y %(count)s más. Revisa el log del servidor para el "
+                    "detalle completo.",
+                    count=remaining,
+                )
+            )
+        return "\n".join(lines)
 
     @api.model
     def _parse_param_ids(self, param_name):

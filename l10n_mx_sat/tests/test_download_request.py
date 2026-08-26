@@ -15,6 +15,7 @@ from odoo.tools import mute_logger
 
 from odoo.addons.l10n_mx_sat.models.l10n_mx_sat_download_request import (
     _CRON_BATCH_SIZE,
+    _MAX_FAILURE_DETAILS,
 )
 from odoo.addons.l10n_mx_sat.services import (
     SAT_CODE_DAILY_LIMIT,
@@ -38,6 +39,7 @@ from odoo.addons.l10n_mx_sat.services.sat_metadata import (
     parse_metadata_content,
 )
 
+_MODULE_LOG = "odoo.addons.l10n_mx_sat.models.l10n_mx_sat_download_request"
 _PATCH_GET_CLIENT = (
     "odoo.addons.l10n_mx_sat.models.l10n_mx_sat_taxpayer.L10nMxSatTaxpayer._get_client"
 )
@@ -879,7 +881,7 @@ class TestDownloadRequest(TransactionCase):
         self.assertEqual(pkg.state, "error")
         self.assertEqual(req.state, "error")
 
-    @mute_logger("odoo.addons.l10n_mx_sat.models.l10n_mx_sat_download_request")
+    @mute_logger(_MODULE_LOG)
     def test_process_package_zip_bomb_guard(self):
         req = self._create_request()
         package_b64 = self._build_zip_b64({"cfdi.xml": b"<root/>"})
@@ -890,6 +892,117 @@ class TestDownloadRequest(TransactionCase):
         ):
             result = req._process_package(package_b64, self.taxpayer)
         self.assertEqual(result["processed"], 0)
+
+    @mute_logger(_MODULE_LOG)
+    def test_one_bad_cfdi_does_not_cost_the_package(self):
+        """H7: a SAT package holds thousands of CFDIs; one defect must not sink it."""
+        req = self._create_request()
+        package_b64 = self._build_zip_b64(
+            {
+                "a_good.xml": self._minimal_cfdi_xml(uuid="H7-GOOD-1"),
+                "b_bad.xml": self._minimal_cfdi_xml(uuid="H7-BAD"),
+                "c_good.xml": self._minimal_cfdi_xml(uuid="H7-GOOD-2"),
+            }
+        )
+        Document = self.env["l10n_mx_sat.document"]
+        original = type(Document)._upsert_from_xml
+
+        def _fail_on_the_bad_one(self, tree, xml_bytes, taxpayer, request):
+            if b"H7-BAD" in xml_bytes:
+                raise ValueError("CFDI defectuoso")
+            return original(self, tree, xml_bytes, taxpayer, request)
+
+        with patch.object(type(Document), "_upsert_from_xml", _fail_on_the_bad_one):
+            result = req._process_package(package_b64, self.taxpayer)
+
+        self.assertEqual(result["processed"], 2, "the two good CFDIs must survive")
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(len(result["documents"]), 2)
+        self.assertEqual(
+            [label for label, _reason in result["failures"]], ["b_bad.xml"]
+        )
+
+    @mute_logger(_MODULE_LOG)
+    def test_database_error_in_one_cfdi_does_not_abort_the_rest(self):
+        """The savepoint is the whole point: a DB error aborts the transaction.
+
+        A plain try/except cannot recover from one, so the CFDI that follows
+        the bad one is what proves the isolation actually works.
+        """
+        req = self._create_request()
+        package_b64 = self._build_zip_b64(
+            {
+                "a_bad.xml": self._minimal_cfdi_xml(uuid="H7-DB-BAD"),
+                "b_good.xml": self._minimal_cfdi_xml(uuid="H7-DB-GOOD"),
+            }
+        )
+        Document = self.env["l10n_mx_sat.document"]
+        original = type(Document)._upsert_from_xml
+
+        def _explode_in_the_database(self, tree, xml_bytes, taxpayer, request):
+            if b"H7-DB-BAD" in xml_bytes:
+                self.env.cr.execute("SELECT 1 / 0")
+            return original(self, tree, xml_bytes, taxpayer, request)
+
+        with patch.object(type(Document), "_upsert_from_xml", _explode_in_the_database):
+            result = req._process_package(package_b64, self.taxpayer)
+
+        self.assertEqual(result["processed"], 1, "the CFDI after the bad one")
+        self.assertEqual(result["failed"], 1)
+        # The cursor survived: on an aborted transaction this would raise.
+        self.assertIsInstance(Document.search_count([]), int)
+
+    @mute_logger(_MODULE_LOG)
+    def test_malformed_xml_is_counted_not_silently_dropped(self):
+        """An unreadable CFDI is a document the SAT has and Odoo does not."""
+        req = self._create_request()
+        package_b64 = self._build_zip_b64(
+            {
+                "broken.xml": b"<cfdi:Comprobante><unclosed>",
+                "good.xml": self._minimal_cfdi_xml(uuid="H7-SYNTAX-OK"),
+            }
+        )
+        result = req._process_package(package_b64, self.taxpayer)
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(result["failures"][0][0], "broken.xml")
+
+    @mute_logger(_MODULE_LOG)
+    def test_package_database_error_is_recorded_not_propagated(self):
+        """Without the package savepoint, marking it as error raised again."""
+        client = self._mock_client()
+        client.download_package.return_value = {
+            "cod_estatus": SAT_CODE_SUCCESS,
+            "package_b64": self._build_zip_b64(
+                {"cfdi.xml": self._minimal_cfdi_xml(uuid="H7-PKG")}
+            ),
+        }
+        req = self._create_request(state="ready", sat_request_id="SOL-DBERR")
+        pkg = self._create_package(req)
+
+        def _db_error(self, package_b64, taxpayer):
+            self.env.cr.execute("SELECT 1 / 0")
+
+        with (
+            self._patch_factory(client),
+            patch.object(type(req), "_process_package", _db_error),
+        ):
+            req._action_download()
+
+        self.env.invalidate_all()
+        self.assertEqual(pkg.state, "error")
+        self.assertEqual(req.state, "error")
+
+    def test_failure_details_are_bounded(self):
+        """The field must stay readable when a whole package is unusable."""
+        Request = self.env["l10n_mx_sat.download.request"]
+        self.assertFalse(Request._format_failure_details([]))
+        failures = [
+            (f"cfdi-{index}.xml", "boom") for index in range(_MAX_FAILURE_DETAILS + 5)
+        ]
+        lines = Request._format_failure_details(failures).splitlines()
+        self.assertEqual(len(lines), _MAX_FAILURE_DETAILS + 1)
+        self.assertIn("5", lines[-1])
 
     def test_get_retry_target_state_with_error_packages(self):
         req = self._create_request(state="error", sat_request_id="SOL-RPKG")
@@ -1244,7 +1357,7 @@ class TestDownloadRequest(TransactionCase):
         self.assertIn("at", call_kwargs)
         self.assertGreaterEqual(call_kwargs["at"], deferred_at)
 
-    @mute_logger("odoo.addons.l10n_mx_sat.models.l10n_mx_sat_download_request")
+    @mute_logger(_MODULE_LOG)
     def test_cron_process_requests_handles_exception(self):
         Request = self.env["l10n_mx_sat.download.request"]
         req = self._create_request()
@@ -1480,7 +1593,7 @@ class TestDownloadRequest(TransactionCase):
         self.assertEqual(req.state, "error")
         self.assertIn("All packages failed", req.error_message)
 
-    @mute_logger("odoo.addons.l10n_mx_sat.models.l10n_mx_sat_download_request")
+    @mute_logger(_MODULE_LOG)
     def test_action_download_package_exception_marks_error(self):
         client = self._mock_client()
         client.download_package.side_effect = Exception("boom")
