@@ -1128,8 +1128,15 @@ class TestDownloadRequest(TransactionCase):
         # Automatic download off, so the only work is what this test queues.
         self.taxpayer.auto_download = False
         drafts = Request.browse()
-        for _index in range(_CRON_BATCH_SIZE + 1):
-            drafts |= self._create_request()
+        # Each request needs its own date range: identical parameters are
+        # rejected on create, which is the guard against SAT code 5002.
+        window_start = datetime(2026, 5, 1)
+        for index in range(_CRON_BATCH_SIZE + 1):
+            date_from = window_start + timedelta(days=index * 2)
+            drafts |= self._create_request(
+                date_from=fields.Datetime.to_string(date_from),
+                date_to=fields.Datetime.to_string(date_from + timedelta(days=1)),
+            )
         Request._add_param_ids("l10n_mx_sat.queued_request_ids", drafts.ids)
         client = self._mock_client()
         client.request_download.return_value = {
