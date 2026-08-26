@@ -13,6 +13,9 @@ from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.tools import mute_logger
 
+from odoo.addons.l10n_mx_sat.models.l10n_mx_sat_download_request import (
+    _CRON_BATCH_SIZE,
+)
 from odoo.addons.l10n_mx_sat.services import (
     SAT_CODE_DAILY_LIMIT,
     SAT_CODE_DUPLICATE_LIFETIME,
@@ -1113,6 +1116,52 @@ class TestDownloadRequest(TransactionCase):
         # The two hand-made drafts stay untouched; only the three the cron
         # created and queued for the remaining flows are processed.
         self.assertEqual(len(processed), 3)
+        # And the cron must not relaunch itself for those leftover drafts.
+        # A draft nobody queued is not pending work, and relaunching over it
+        # is what used to send unauthorised requests to the SAT on its own.
+        mock_trigger.assert_not_called()
+
+    def test_cron_relaunches_itself_while_queued_work_remains(self):
+        """The batch limit must defer the rest of the queue, not drop it."""
+        Request = self.env["l10n_mx_sat.download.request"]
+        Request.search([("taxpayer_id", "=", self.taxpayer.id)]).unlink()
+        # Automatic download off, so the only work is what this test queues.
+        self.taxpayer.auto_download = False
+        drafts = Request.browse()
+        for _index in range(_CRON_BATCH_SIZE + 1):
+            drafts |= self._create_request()
+        Request._add_param_ids("l10n_mx_sat.queued_request_ids", drafts.ids)
+        client = self._mock_client()
+        client.request_download.return_value = {
+            "cod_estatus": SAT_CODE_SUCCESS,
+            "sat_request_id": "SOL-QUEUE",
+            "message": "Solicitud aceptada",
+        }
+        client.verify_download.return_value = {
+            "cod_estatus": SAT_CODE_SUCCESS,
+            "request_status": SAT_REQUEST_STATUS_REJECTED,
+            "request_status_code": SAT_CODE_NO_INFO,
+            "reported_cfdi_count": 0,
+            "packages": [],
+            "message": "Solicitud Accepted",
+        }
+        with (
+            self._patch_factory(client),
+            patch.object(type(Request), "_cron_trigger") as mock_trigger,
+        ):
+            Request._cron_process_requests(taxpayers=self.taxpayer)
+
+        leftover = drafts.filtered(lambda rec: rec.state == "draft")
+        self.assertEqual(
+            len(leftover),
+            1,
+            "the batch limit should leave exactly one request for the next run",
+        )
+        self.assertEqual(
+            Request._parse_param_ids("l10n_mx_sat.queued_request_ids"),
+            leftover.ids,
+            "the request left over must stay queued",
+        )
         mock_trigger.assert_called_once_with()
 
     def test_cron_processing_defers_trigger(self):
