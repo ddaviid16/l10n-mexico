@@ -238,9 +238,14 @@ class AccountMove(models.Model):
         )
 
         # 6. Extract invoice_date
-        fecha_timbrado = tfd_nodes[0].get("FechaTimbrado")
+        # Fecha is the issue date the CFDI declares; FechaTimbrado is only when
+        # the PAC certified it, which the SAT allows up to 72 hours later.
+        # Reading the stamp first put invoices issued near month end into the
+        # wrong accounting period, and it contradicted l10n_mx_sat.document,
+        # which already stores Fecha as the issue date and the stamp apart.
         fecha_emision = tree.get("Fecha")
-        date_str = fecha_timbrado or fecha_emision
+        fecha_timbrado = tfd_nodes[0].get("FechaTimbrado")
+        date_str = fecha_emision or fecha_timbrado
         invoice_date = False
         if date_str:
             invoice_date = dt.strptime(date_str[:19], CFDI_DATE_FORMAT).date()

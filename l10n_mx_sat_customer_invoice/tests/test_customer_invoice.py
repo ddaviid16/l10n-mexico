@@ -183,6 +183,23 @@ class TestCustomerInvoice(CustomerInvoiceTestCommon):
         self.assertFalse(document.customer_invoice_id)
         self.assertFalse(document.total_mismatch)
 
+    def test_month_end_invoice_uses_issue_date_not_stamp(self):
+        """H4: the PAC may stamp up to 72h later, across the period boundary.
+
+        Issued 31 January, stamped 1 February. Taking the stamp date moved the
+        invoice into the wrong month, and with it the wrong tax period.
+        """
+        move = self._create_invoice(
+            self._cfdi_xml(
+                uuid="monthend-1111-2222-3333-444455556666",
+                fecha="2026-01-31T23:50:00",
+                fecha_timbrado="2026-02-01T00:30:00",
+                folio="ME1",
+            )
+        )
+        self.assertTrue(move)
+        self.assertEqual(str(move.invoice_date), "2026-01-31")
+
     def test_document_hook_ignores_received_direction(self):
         received = self.env["l10n_mx_sat.download.request"].create(
             {
