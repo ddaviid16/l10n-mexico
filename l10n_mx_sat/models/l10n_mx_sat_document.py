@@ -3,9 +3,10 @@
 
 import logging
 from datetime import datetime as dt
+from datetime import timedelta
 
 from odoo import api, fields, models
-from odoo.exceptions import AccessError
+from odoo.exceptions import AccessError, UserError
 
 from ..services.sat_metadata import (
     SAT_STATUS_VALID,
@@ -18,6 +19,14 @@ CFDI_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 # A cent. Below this, the gap is float noise, not a real accounting difference.
 _TOTAL_TOLERANCE = 0.01
+
+# Statuses worth re-checking: a cancelled CFDI never goes back to valid.
+_REFRESHABLE_SAT_STATUSES = ("valid", "in_progress")
+# Documents per cron run. The SAT consulta endpoint is one HTTP call each, so
+# this bounds how long a single run can take rather than any SAT quota.
+_STATUS_CHECK_BATCH = 200
+# Leave a document alone for this long after a successful check.
+_STATUS_CHECK_INTERVAL_DAYS = 7
 
 
 class L10nMxSatDocument(models.Model):
@@ -80,6 +89,13 @@ class L10nMxSatDocument(models.Model):
     issue_date = fields.Datetime(string="Issue date", readonly=True, index=True)
     stamp_date = fields.Datetime(string="Stamp date", readonly=True)
     cancellation_date = fields.Datetime(string="Cancellation date", readonly=True)
+    sat_status_check_date = fields.Datetime(
+        string="Ultima consulta de estatus",
+        readonly=True,
+        index=True,
+        help="Cuando se consulto por ultima vez el estatus de este CFDI en el "
+        "SAT. Los documentos sin consultar se revisan primero.",
+    )
     total = fields.Float(digits=(16, 6), readonly=True)
     currency_code = fields.Char(string="Currency", readonly=True)
     series = fields.Char(readonly=True)
@@ -194,6 +210,152 @@ class L10nMxSatDocument(models.Model):
                 ),
                 "type": "warning" if self.filtered("total_mismatch") else "success",
                 "sticky": False,
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # SAT status refresh (consulta CFDI)
+    # ------------------------------------------------------------------
+
+    @api.model
+    def _build_status_check_domain(self):
+        """Documents the SAT can still tell us something new about."""
+        return [
+            ("uuid", "!=", False),
+            ("issuer_rfc", "!=", False),
+            ("receiver_rfc", "!=", False),
+            ("sat_status", "in", _REFRESHABLE_SAT_STATUSES),
+        ]
+
+    def _format_total_for_sat(self):
+        """Render the total the way the SAT consulta expression expects it."""
+        self.ensure_one()
+        return f"{self.total or 0.0:.2f}"
+
+    def _refresh_sat_status(self):
+        """Ask the SAT for the current status of each document.
+
+        Every document is queried inside its own savepoint: one unreachable
+        CFDI must not undo the statuses already refreshed in this run. Returns
+        how many documents actually changed status.
+        """
+        checked_at = fields.Datetime.now()
+        changed = 0
+        for taxpayer, documents in self.grouped("taxpayer_id").items():
+            if not taxpayer or not taxpayer._has_credentials():
+                _logger.info(
+                    "Skipping SAT status check for %s document(s): razon social "
+                    "%s has no FIEL credentials",
+                    len(documents),
+                    taxpayer.display_name if taxpayer else "?",
+                )
+                continue
+            try:
+                client = taxpayer._get_client()
+            except Exception:
+                _logger.exception(
+                    "Could not build a SAT client for razon social %s",
+                    taxpayer.display_name,
+                )
+                continue
+            for document in documents:
+                try:
+                    with self.env.cr.savepoint():
+                        result = client.validate_cfdi(
+                            document.issuer_rfc,
+                            document.receiver_rfc,
+                            document._format_total_for_sat(),
+                            document.uuid,
+                        )
+                        previous = document.sat_status
+                        self._update_status_from_validate(document, result)
+                        document._sat_write({"sat_status_check_date": checked_at})
+                        if document.sat_status != previous:
+                            changed += 1
+                except Exception:
+                    _logger.exception(
+                        "SAT status check failed for CFDI %s", document.uuid
+                    )
+                    self.env.invalidate_all()
+        return changed
+
+    @api.model
+    def _cron_refresh_sat_status(self, limit=None):
+        """Re-check documents whose SAT status could still change.
+
+        A supplier can cancel a CFDI long after we downloaded it, and nothing
+        in the bulk download tells us: the package only ever carries what the
+        SAT held when the request ran.
+        """
+        limit = limit or _STATUS_CHECK_BATCH
+        Document = self.sudo()
+        base_domain = self._build_status_check_domain()
+        # Never-checked documents go first. Ordering by the check date alone
+        # would not do it: in SQL an ascending sort puts NULL last.
+        documents = Document.search(
+            base_domain + [("sat_status_check_date", "=", False)],
+            order="issue_date desc",
+            limit=limit,
+        )
+        if len(documents) < limit:
+            stale_before = fields.Datetime.now() - timedelta(
+                days=_STATUS_CHECK_INTERVAL_DAYS
+            )
+            documents |= Document.search(
+                base_domain
+                + [
+                    ("sat_status_check_date", "!=", False),
+                    ("sat_status_check_date", "<", stale_before),
+                ],
+                order="sat_status_check_date asc",
+                limit=limit - len(documents),
+            )
+        if not documents:
+            return 0
+        changed = documents._refresh_sat_status()
+        _logger.info(
+            "SAT status check: %s document(s) queried, %s changed",
+            len(documents),
+            changed,
+        )
+        return changed
+
+    def action_check_sat_status(self):
+        """Button: query the SAT for the status of the selected documents."""
+        if not self.env.user.has_group("l10n_mx_sat.group_sat_manager"):
+            raise AccessError(
+                self.env._(
+                    "Solo un gerente SAT puede consultar el estatus de los "
+                    "documentos en el SAT."
+                )
+            )
+        checkable = self.filtered(
+            lambda doc: doc.uuid and doc.issuer_rfc and doc.receiver_rfc
+        )
+        if not checkable:
+            raise UserError(
+                self.env._(
+                    "Ninguno de los documentos seleccionados tiene los datos "
+                    "que el SAT necesita para la consulta: folio fiscal, RFC "
+                    "emisor y RFC receptor."
+                )
+            )
+        changed = checkable._refresh_sat_status()
+        cancelled = len(checkable.filtered(lambda doc: doc.sat_status == "cancelled"))
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": self.env._("Estatus consultado en el SAT"),
+                "message": self.env._(
+                    "%(checked)s documento(s) consultados, %(changed)s con "
+                    "cambio de estatus. Cancelados: %(cancelled)s.",
+                    checked=len(checkable),
+                    changed=changed,
+                    cancelled=cancelled,
+                ),
+                "type": "warning" if cancelled else "success",
+                "sticky": bool(cancelled),
             },
         }
 

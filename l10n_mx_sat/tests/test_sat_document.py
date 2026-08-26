@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from lxml import etree
 
-from odoo.exceptions import AccessError
+from odoo.exceptions import AccessError, UserError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.tools import mute_logger
@@ -348,6 +348,129 @@ class TestSatDocument(TransactionCase):
         self.assertEqual(doc.sat_status, "in_progress")
         self.Document._update_status_from_validate(doc, {"estado": "Vigente"})
         self.assertEqual(doc.sat_status, "valid")
+
+    # ------------------------------------------------------------------
+    # H3: the SAT status refresh
+    # ------------------------------------------------------------------
+
+    def _status_doc(self, uuid, **overrides):
+        vals = {
+            "taxpayer_id": self.taxpayer.id,
+            "uuid": uuid,
+            "document_kind": "cfdi",
+            "direction": "received",
+            "sat_status": "valid",
+            "issuer_rfc": "AAA010101AAA",
+            "receiver_rfc": "EKU9003173C9",
+            "total": 1650.0,
+        }
+        vals.update(overrides)
+        return self.Document._sat_create([vals])
+
+    def _validating_client(self, estado="Cancelado"):
+        client = MagicMock()
+        client.validate_cfdi.return_value = {
+            "codigo_estatus": "S - Comprobante obtenido satisfactoriamente.",
+            "es_cancelable": "No cancelable",
+            "estado": estado,
+        }
+        return client
+
+    def test_cancelled_at_the_sat_is_detected(self):
+        """The H3 scenario: a supplier cancels after we downloaded the CFDI."""
+        doc = self._status_doc("H3-CANCELLED-UUID")
+        client = self._validating_client("Cancelado")
+        with patch(_PATCH_GET_CLIENT, return_value=client):
+            changed = doc._refresh_sat_status()
+        self.assertEqual(changed, 1)
+        self.assertEqual(doc.sat_status, "cancelled")
+        self.assertTrue(doc.sat_status_check_date, "the check must be stamped")
+
+    def test_status_unchanged_is_still_stamped(self):
+        """Otherwise the same documents get re-queried run after run."""
+        doc = self._status_doc("H3-STILL-VALID-UUID")
+        client = self._validating_client("Vigente")
+        with patch(_PATCH_GET_CLIENT, return_value=client):
+            changed = doc._refresh_sat_status()
+        self.assertEqual(changed, 0)
+        self.assertEqual(doc.sat_status, "valid")
+        self.assertTrue(doc.sat_status_check_date)
+
+    def test_total_is_sent_with_two_decimals(self):
+        """The SAT consulta expression matches on the printed total."""
+        doc = self._status_doc("H3-TOTAL-UUID", total=1650.0)
+        self.assertEqual(doc._format_total_for_sat(), "1650.00")
+        client = self._validating_client("Vigente")
+        with patch(_PATCH_GET_CLIENT, return_value=client):
+            doc._refresh_sat_status()
+        client.validate_cfdi.assert_called_once_with(
+            "AAA010101AAA", "EKU9003173C9", "1650.00", "H3-TOTAL-UUID"
+        )
+
+    @mute_logger("odoo.addons.l10n_mx_sat.models.l10n_mx_sat_document")
+    def test_one_unreachable_cfdi_does_not_undo_the_others(self):
+        """Same isolation rule as the package import: fail one, keep the rest."""
+        bad = self._status_doc("H3-BOOM-UUID")
+        good = self._status_doc("H3-SURVIVOR-UUID")
+        client = MagicMock()
+
+        def _validate(issuer_rfc, receiver_rfc, total, uuid):
+            if uuid == "H3-BOOM-UUID":
+                raise OSError("SAT no responde")
+            return {"codigo_estatus": "S", "es_cancelable": "", "estado": "Cancelado"}
+
+        client.validate_cfdi.side_effect = _validate
+        with patch(_PATCH_GET_CLIENT, return_value=client):
+            changed = (bad | good)._refresh_sat_status()
+
+        self.assertEqual(changed, 1)
+        self.assertEqual(good.sat_status, "cancelled")
+        self.assertEqual(bad.sat_status, "valid", "the failed one keeps its status")
+        self.assertFalse(bad.sat_status_check_date, "and is not marked as checked")
+
+    @mute_logger("odoo.addons.l10n_mx_sat.models.l10n_mx_sat_document")
+    def test_taxpayer_without_credentials_is_skipped(self):
+        """No FIEL, no client: skip quietly instead of failing the whole run."""
+        taxpayer = self.env["l10n_mx_sat.taxpayer"].create(
+            {
+                "name": "Sin FIEL",
+                "company_id": self.company.id,
+            }
+        )
+        doc = self._status_doc("H3-NO-FIEL-UUID", taxpayer_id=taxpayer.id)
+        self.assertEqual(doc._refresh_sat_status(), 0)
+        self.assertFalse(doc.sat_status_check_date)
+
+    def test_cron_skips_documents_already_cancelled(self):
+        """A cancelled CFDI never goes back to valid, so stop asking."""
+        cancelled = self._status_doc("H3-DONE-UUID", sat_status="cancelled")
+        domain = self.Document._build_status_check_domain()
+        self.assertNotIn(cancelled, self.Document.search(domain))
+
+    def test_cron_checks_never_checked_documents_first(self):
+        """An ascending SQL sort puts NULL last, which would starve new rows."""
+        stale = self._status_doc("H3-STALE-UUID")
+        stale._sat_write({"sat_status_check_date": "2020-01-01 00:00:00"})
+        fresh = self._status_doc("H3-NEVER-UUID")
+        client = self._validating_client("Vigente")
+        with patch(_PATCH_GET_CLIENT, return_value=client):
+            self.Document._cron_refresh_sat_status(limit=1)
+        self.assertTrue(fresh.sat_status_check_date, "never-checked goes first")
+        self.assertEqual(
+            stale.sat_status_check_date.year, 2020, "the stale one waits its turn"
+        )
+
+    def test_manual_check_requires_manager(self):
+        doc = self._status_doc("H3-ACL-UUID")
+        manager = self.env.ref("l10n_mx_sat.group_sat_manager")
+        self.env.user.group_ids = [(3, manager.id)]
+        with self.assertRaises(AccessError):
+            doc.action_check_sat_status()
+
+    def test_manual_check_without_the_required_data_is_refused(self):
+        doc = self._status_doc("H3-NODATA-UUID", issuer_rfc=False)
+        with self.assertRaises(UserError):
+            doc.action_check_sat_status()
 
     def test_unlink_manual_blocked(self):
         doc = self.Document._sat_create(

@@ -9,4 +9,14 @@
         <field name="interval_type">days</field>
         <field name="active" eval="True" />
     </record>
+
+    <record id="ir_cron_sat_status_check" model="ir.cron">
+        <field name="name">SAT: Refresh CFDI status</field>
+        <field name="model_id" ref="model_l10n_mx_sat_document" />
+        <field name="state">code</field>
+        <field name="code">model._cron_refresh_sat_status()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">days</field>
+        <field name="active" eval="True" />
+    </record>
 </odoo>

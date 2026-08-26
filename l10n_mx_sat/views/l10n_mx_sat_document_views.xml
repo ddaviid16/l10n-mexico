@@ -56,6 +56,13 @@
                         icon="fa-calculator"
                     />
                     <button
+                        name="action_check_sat_status"
+                        type="object"
+                        string="Consultar estatus en el SAT"
+                        class="btn-secondary"
+                        icon="fa-refresh"
+                    />
+                    <button
                         name="action_download_xml"
                         type="object"
                         string="Download XML"
@@ -86,6 +93,7 @@
                             <field name="issue_date" readonly="1" />
                             <field name="stamp_date" readonly="1" />
                             <field name="cancellation_date" readonly="1" />
+                            <field name="sat_status_check_date" readonly="1" />
                             <field name="total" readonly="1" string="Total CFDI" />
                             <field name="invoice_total" readonly="1" />
                             <field name="total_difference" readonly="1" />
@@ -219,6 +227,15 @@
         <field name="binding_view_types">list,form</field>
         <field name="state">code</field>
         <field name="code">action = records.action_recompute_total_mismatch()</field>
+    </record>
+
+    <record id="action_check_sat_status" model="ir.actions.server">
+        <field name="name">Consultar estatus en el SAT</field>
+        <field name="model_id" ref="model_l10n_mx_sat_document" />
+        <field name="binding_model_id" ref="model_l10n_mx_sat_document" />
+        <field name="binding_view_types">list,form</field>
+        <field name="state">code</field>
+        <field name="code">action = records.action_check_sat_status()</field>
     </record>
 
     <record id="l10n_mx_sat_document_action" model="ir.actions.act_window">
