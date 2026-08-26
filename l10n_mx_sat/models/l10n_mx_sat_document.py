@@ -168,7 +168,19 @@ class L10nMxSatDocument(models.Model):
             )
 
     def action_recompute_total_mismatch(self):
-        """Button: recheck the selected documents against their invoices."""
+        """Button: recheck the selected documents against their invoices.
+
+        Guarded here rather than on the server action: the recompute writes
+        through _sat_write, which is sudo, so the model ACL would not stop a
+        read-only SAT user on its own.
+        """
+        if not self.env.user.has_group("l10n_mx_sat.group_sat_manager"):
+            raise AccessError(
+                self.env._(
+                    "Solo un gerente SAT puede recalcular el descuadre de los "
+                    "documentos."
+                )
+            )
         self._refresh_total_mismatch()
         return {
             "type": "ir.actions.client",

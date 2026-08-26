@@ -217,7 +217,6 @@
         <field name="model_id" ref="model_l10n_mx_sat_document" />
         <field name="binding_model_id" ref="model_l10n_mx_sat_document" />
         <field name="binding_view_types">list,form</field>
-        <field name="groups_id" eval="[(4, ref('l10n_mx_sat.group_sat_manager'))]" />
         <field name="state">code</field>
         <field name="code">action = records.action_recompute_total_mismatch()</field>
     </record>
