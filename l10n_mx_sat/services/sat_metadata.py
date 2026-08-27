@@ -4,7 +4,10 @@
 import csv
 import hashlib
 import io
+import logging
 import re
+
+_logger = logging.getLogger(__name__)
 
 # SAT metadata Estado values (case-insensitive normalization).
 SAT_STATUS_VALID = "valid"
@@ -23,12 +26,21 @@ _STATUS_MAP = {
 
 
 def normalize_sat_status(value):
-    """Normalize SAT metadata Estado column to internal selection keys."""
+    """Normalize a SAT Estado value to an internal selection key.
+
+    Returns False for anything we do not recognise. sat_status is a selection
+    with three values, so deriving a key from the raw text writes something the
+    column cannot hold: the SAT answers "No Encontrado" as well as Vigente and
+    Cancelado, and that third answer used to land here and break the write.
+    """
     if not value:
         return False
     key = str(value).strip().lower()
     key = re.sub(r"\s+", " ", key)
-    return _STATUS_MAP.get(key, key.replace(" ", "_"))
+    status = _STATUS_MAP.get(key)
+    if not status:
+        _logger.info("Unrecognised SAT Estado value, ignored: %r", value)
+    return status or False
 
 
 def build_request_fingerprint(

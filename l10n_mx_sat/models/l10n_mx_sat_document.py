@@ -780,3 +780,18 @@ class L10nMxSatDocument(models.Model):
         estado = normalize_sat_status(validate_result.get("estado"))
         if estado:
             document._sat_write({"sat_status": estado})
+            return
+        raw = validate_result.get("estado")
+        if raw:
+            # "No Encontrado" reaches here. The check still counts as done, so
+            # the document stops going round the queue, but an operator needs
+            # the folio to find out why the SAT could not match it.
+            _logger.warning(
+                "SAT did not return a usable status for CFDI %(uuid)s: %(raw)r. "
+                "Keeping %(kept)s.",
+                {
+                    "uuid": document.uuid,
+                    "raw": raw,
+                    "kept": document.sat_status,
+                },
+            )

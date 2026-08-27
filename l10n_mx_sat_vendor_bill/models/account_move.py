@@ -112,6 +112,22 @@ class AccountMove(models.Model):
                     rate=amount,
                 )
             self.message_post(body=msg)
+        elif len(taxes) > 1:
+            # The search already asked for two. Picking the first in silence is
+            # what let a lease withholding land on the payroll tax without
+            # anything on the invoice saying so.
+            self.message_post(
+                body=self.env._(
+                    "Empate de impuestos: para %(tax_type)s al %(rate)s%% hay "
+                    "más de un impuesto configurado. Se aplicó «%(chosen)s»; "
+                    "también coincide «%(other)s». Verifica que la retención "
+                    "haya quedado en la cuenta correcta.",
+                    tax_type=tax_type or tax_code,
+                    rate=amount,
+                    chosen=taxes[0].display_name,
+                    other=taxes[1].display_name,
+                )
+            )
         return taxes[:1]
 
     def _l10n_mx_sat_fill_invoice_line(self, concepto, line):

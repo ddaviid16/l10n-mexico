@@ -11,6 +11,7 @@ from odoo.tests.common import TransactionCase
 from odoo.tools import mute_logger
 
 from odoo.addons.l10n_mx_sat.services.sat_helpers import SAFE_XML_PARSER
+from odoo.addons.l10n_mx_sat.services.sat_metadata import normalize_sat_status
 
 _PATCH_GET_CLIENT = (
     "odoo.addons.l10n_mx_sat.models.l10n_mx_sat_taxpayer.L10nMxSatTaxpayer._get_client"
@@ -466,6 +467,37 @@ class TestSatDocument(TransactionCase):
         self.env.user.group_ids = [(3, manager.id)]
         with self.assertRaises(AccessError):
             doc.action_check_sat_status()
+
+    def test_unrecognised_status_seals_the_check_instead_of_crashing(self):
+        """H9: the SAT has a third answer, "No Encontrado", and it is not a
+        selection value. Writing it used to raise, the savepoint undid the
+        check date with it, and the document went back to the front of the
+        queue forever because never-checked documents are served first.
+        """
+        doc = self._status_doc("H9-NOT-FOUND-UUID")
+        client = self._validating_client("No Encontrado")
+        with patch(_PATCH_GET_CLIENT, return_value=client):
+            changed = doc._refresh_sat_status()
+
+        self.assertEqual(changed, 0)
+        self.assertEqual(doc.sat_status, "valid", "an unusable answer changes nothing")
+        self.assertTrue(
+            doc.sat_status_check_date,
+            "the check must be sealed, or the document is retried every run",
+        )
+        never_checked = self.Document.search(
+            self.Document._build_status_check_domain()
+            + [("sat_status_check_date", "=", False)]
+        )
+        self.assertNotIn(doc, never_checked, "it must not head the next batch")
+
+    def test_unknown_status_values_never_become_selection_keys(self):
+        """The metadata import runs through the same helper."""
+        self.assertFalse(normalize_sat_status("No Encontrado"))
+        self.assertFalse(normalize_sat_status("Algo que el SAT invente"))
+        self.assertEqual(normalize_sat_status("Vigente"), "valid")
+        self.assertEqual(normalize_sat_status("Cancelado"), "cancelled")
+        self.assertEqual(normalize_sat_status("En Proceso"), "in_progress")
 
     def test_manual_check_without_the_required_data_is_refused(self):
         doc = self._status_doc("H3-NODATA-UUID", issuer_rfc=False)
