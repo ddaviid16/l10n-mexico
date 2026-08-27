@@ -1,7 +1,11 @@
 # Copyright (C) 2026 Gray Matter Logic (<https://www.graymatterlogic.com>).
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
+import logging
+
 from odoo import api, fields, models
+
+_logger = logging.getLogger(__name__)
 
 
 class L10nMxSatDocument(models.Model):
@@ -37,5 +41,17 @@ class L10nMxSatDocument(models.Model):
         )
         if move:
             document._sat_write({"vendor_bill_id": move.id})
+            try:
+                # Isolated: a failure to match must not cost the bill itself,
+                # nor the rest of the package this CFDI came in.
+                with self.env.cr.savepoint():
+                    move._l10n_mx_sat_try_purchase_match(document.total)
+            except Exception:
+                _logger.exception(
+                    "Purchase order matching failed for CFDI %s", document.uuid
+                )
+                self.env.invalidate_all()
+            # Measured after matching: when the order's lines replace the
+            # CFDI ones, this flag is what verifies the match was right.
             document._refresh_total_mismatch()
         return document
