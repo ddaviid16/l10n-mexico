@@ -54,7 +54,10 @@
         </field>
     </record>
 
-    <record id="l10n_mx_sat_purchase_match_action" model="ir.actions.server">
+    <!-- A new id on purpose: earlier versions of this module shipped
+         l10n_mx_sat_purchase_match_action as an ir.actions.act_window, and
+         Odoo refuses to turn an existing external id into another model. -->
+    <record id="l10n_mx_sat_purchase_match_server_action" model="ir.actions.server">
         <field name="name">Cotejo con órdenes de compra</field>
         <field name="model_id" ref="model_l10n_mx_sat_purchase_match" />
         <field name="state">code</field>
@@ -65,7 +68,7 @@
         id="menu_l10n_mx_sat_purchase_match"
         name="Cotejo con órdenes de compra"
         parent="l10n_mx_sat.menu_l10n_mx_sat_root"
-        action="l10n_mx_sat_purchase_match_action"
+        action="l10n_mx_sat_purchase_match_server_action"
         sequence="15"
         groups="l10n_mx_sat.group_sat_manager"
     />
