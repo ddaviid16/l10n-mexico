@@ -17,7 +17,15 @@ class TestMatchWizard(TestPurchaseMatch):
     """
 
     def _wizard(self):
-        return self.env["l10n_mx_sat.purchase.match"].create({})
+        """Open it the way the menu does, so the tests exercise that path."""
+        Wizard = self.env["l10n_mx_sat.purchase.match"]
+        action = Wizard.action_open()
+        self.assertEqual(action["res_model"], Wizard._name)
+        wizard = Wizard.browse(action["res_id"])
+        self.assertTrue(
+            wizard.exists(), "the record must be saved before the screen opens"
+        )
+        return wizard
 
     def _line_for(self, wizard, document):
         return wizard.line_ids.filtered(lambda line: line.document_id == document)

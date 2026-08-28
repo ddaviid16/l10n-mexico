@@ -54,11 +54,11 @@
         </field>
     </record>
 
-    <record id="l10n_mx_sat_purchase_match_action" model="ir.actions.act_window">
+    <record id="l10n_mx_sat_purchase_match_action" model="ir.actions.server">
         <field name="name">Cotejo con órdenes de compra</field>
-        <field name="res_model">l10n_mx_sat.purchase.match</field>
-        <field name="view_mode">form</field>
-        <field name="target">new</field>
+        <field name="model_id" ref="model_l10n_mx_sat_purchase_match" />
+        <field name="state">code</field>
+        <field name="code">action = model.action_open()</field>
     </record>
 
     <menuitem

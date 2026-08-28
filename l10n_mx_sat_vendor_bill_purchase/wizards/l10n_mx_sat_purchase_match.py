@@ -24,11 +24,25 @@ class L10nMxSatPurchaseMatch(models.TransientModel):
     )
 
     @api.model
-    def default_get(self, fields_list):
-        vals = super().default_get(fields_list)
-        if "line_ids" in fields_list:
-            vals["line_ids"] = [(0, 0, line) for line in self._scan()]
-        return vals
+    def action_open(self):
+        """Build the wizard on the server and open the saved record.
+
+        Not through default_get: those values only live in the browser until
+        it sends them back, and it does not send back what the view shows as
+        readonly. The lines would arrive empty and there was nothing to link.
+        Creating the record first means the analysis is already in the
+        database, and the browser only has to return what the reviewer
+        actually touched.
+        """
+        wizard = self.create({"line_ids": [(0, 0, line) for line in self._scan()]})
+        return {
+            "type": "ir.actions.act_window",
+            "name": self.env._("Cotejo con órdenes de compra"),
+            "res_model": self._name,
+            "res_id": wizard.id,
+            "view_mode": "form",
+            "target": "new",
+        }
 
     @api.model
     def _scan(self):
@@ -129,10 +143,12 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
     document_id = fields.Many2one(
         comodel_name="l10n_mx_sat.document",
         string="Documento SAT",
+        readonly=True,
     )
     move_id = fields.Many2one(
         comodel_name="account.move",
         string="Factura",
+        readonly=True,
     )
     partner_id = fields.Many2one(
         related="move_id.partner_id",
@@ -143,6 +159,7 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
     cfdi_total = fields.Float(
         string="Total CFDI",
         digits=(16, 2),
+        readonly=True,
     )
     situation = fields.Selection(
         selection=[
@@ -151,14 +168,17 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
             ("none", "Sin candidatas"),
         ],
         string="Situación",
+        readonly=True,
     )
     suggested_order_id = fields.Many2one(
         comodel_name="purchase.order",
         string="Orden sugerida",
+        readonly=True,
     )
     candidate_order_ids = fields.Many2many(
         comodel_name="purchase.order",
         string="Órdenes candidatas",
+        readonly=True,
     )
     chosen_order_id = fields.Many2one(
         comodel_name="purchase.order",
@@ -167,9 +187,6 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
         help="Elige cuál de las candidatas corresponde a esta factura. "
         "El sistema no puede distinguirlas: todas cuadran en proveedor y total.",
     )
-    # These carry what default_get worked out. They are marked readonly in the
-    # view, not here: the web client does not send model-readonly fields back,
-    # so declaring them readonly emptied every line on the way to the button.
     selected = fields.Boolean(string="Enlazar")
 
     def _label(self):
