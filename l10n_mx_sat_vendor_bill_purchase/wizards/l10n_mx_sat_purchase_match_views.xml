@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="l10n_mx_sat_purchase_match_view_form" model="ir.ui.view">
+        <field name="name">l10n_mx_sat.purchase.match.form</field>
+        <field name="model">l10n_mx_sat.purchase.match</field>
+        <field name="arch" type="xml">
+            <form string="Cotejo con órdenes de compra">
+                <div class="alert alert-warning" role="alert">
+                    Al enlazar, los renglones del CFDI se
+                    <b>reemplazan</b> por los de la orden de compra. Eso es lo que
+                    aporta el producto y la cuenta contable, pero si alguien ya
+                    capturó algo en la factura, se pierde.
+                </div>
+                <field
+                    name="line_ids"
+                    nolabel="1"
+                    options="{'no_create': True}"
+                >
+                    <list editable="bottom" create="0" delete="0">
+                        <field name="selected" string="Enlazar" widget="boolean_toggle" />
+                        <field name="document_id" readonly="1" />
+                        <field name="partner_id" readonly="1" />
+                        <field name="invoice_date" readonly="1" />
+                        <field name="cfdi_total" readonly="1" sum="Total" />
+                        <field
+                            name="situation"
+                            readonly="1"
+                            widget="badge"
+                            decoration-success="situation == 'exact'"
+                            decoration-warning="situation == 'several'"
+                            decoration-muted="situation == 'none'"
+                        />
+                        <field name="suggested_order_id" readonly="1" />
+                        <field name="candidate_order_ids" column_invisible="1" />
+                        <field
+                            name="chosen_order_id"
+                            readonly="situation != 'several'"
+                            options="{'no_create': True}"
+                        />
+                        <field name="move_id" optional="hide" readonly="1" />
+                    </list>
+                </field>
+                <footer>
+                    <button
+                        name="action_link_selected"
+                        type="object"
+                        string="Enlazar seleccionadas"
+                        class="btn-primary"
+                        confirm="Se reemplazarán los renglones del CFDI por los de la orden en las facturas seleccionadas. ¿Continuar?"
+                    />
+                    <button string="Cancelar" class="btn-secondary" special="cancel" />
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="l10n_mx_sat_purchase_match_action" model="ir.actions.act_window">
+        <field name="name">Cotejo con órdenes de compra</field>
+        <field name="res_model">l10n_mx_sat.purchase.match</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <menuitem
+        id="menu_l10n_mx_sat_purchase_match"
+        name="Cotejo con órdenes de compra"
+        parent="l10n_mx_sat.menu_l10n_mx_sat_root"
+        action="l10n_mx_sat_purchase_match_action"
+        sequence="15"
+        groups="l10n_mx_sat.group_sat_manager"
+    />
+</odoo>

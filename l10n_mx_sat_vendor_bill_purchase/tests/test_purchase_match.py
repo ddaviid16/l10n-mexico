@@ -1,11 +1,13 @@
 # Copyright (C) 2026 Gray Matter Logic (<https://www.graymatterlogic.com>).
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
-import unittest
-
 from odoo.tests import tagged
 
-from .common import EMISOR_NAME, EMISOR_RFC, VendorBillTestCommon
+from odoo.addons.l10n_mx_sat_vendor_bill.tests.common import (
+    EMISOR_NAME,
+    EMISOR_RFC,
+    VendorBillTestCommon,
+)
 
 # The CFDI helper declares this total, and matching is done on it.
 CFDI_TOTAL = 1650.00
@@ -25,8 +27,6 @@ class TestPurchaseMatch(VendorBillTestCommon):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        if "purchase.order" not in cls.env:
-            raise unittest.SkipTest("purchase is not installed")
         cls.vendor = cls.env["res.partner"].create(
             {"name": EMISOR_NAME, "vat": EMISOR_RFC}
         )
@@ -55,6 +55,20 @@ class TestPurchaseMatch(VendorBillTestCommon):
         )
         order.button_confirm()
         return order
+
+    def _import_without_orders(self, uuid):
+        """Import a CFDI while nothing matches, so the bill stays unlinked.
+
+        The wizard only lists unlinked bills, so its tests have to import
+        before the orders exist.
+        """
+        document = self._import(uuid)
+        self.assertEqual(
+            document.vendor_bill_id.purchase_order_count,
+            0,
+            "this helper assumes no order matches yet",
+        )
+        return document
 
     def _import(self, uuid):
         xml = self._cfdi_xml(uuid=uuid)
