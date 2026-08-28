@@ -96,9 +96,12 @@ class TestMatchWizard(TestPurchaseMatch):
         wizard = self._wizard()
         line = self._line_for(wizard, document)
         line.selected = True
-        wizard.action_link_selected()
+        # The notification names what it skipped, and a draft bill has no
+        # number yet: building that message used to crash right here.
+        action = wizard.action_link_selected()
 
         self.assertEqual(document.vendor_bill_id.purchase_order_count, 0)
+        self.assertIn(document.uuid, action["params"]["message"])
 
     def test_linking_nothing_is_refused(self):
         self._import_without_orders("wiz7-1111-2222-3333-444455556666")

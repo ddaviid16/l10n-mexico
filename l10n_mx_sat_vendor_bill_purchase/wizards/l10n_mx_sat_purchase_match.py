@@ -92,13 +92,13 @@ class L10nMxSatPurchaseMatch(models.TransientModel):
                     if line._link():
                         linked += 1
                     else:
-                        skipped.append(line.move_id.display_name)
+                        skipped.append(line._label())
             except Exception:
                 _logger.exception(
                     "Linking bill id=%s to a purchase order failed", line.move_id.id
                 )
                 self.env.invalidate_all()
-                skipped.append(line.move_id.display_name)
+                skipped.append(line._label())
 
         message = self.env._("%(linked)s factura(s) enlazadas.", linked=linked)
         if skipped:
@@ -174,6 +174,20 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
         "El sistema no puede distinguirlas: todas cuadran en proveedor y total.",
     )
     selected = fields.Boolean(string="Enlazar")
+
+    def _label(self):
+        """A name for this row that is always a string.
+
+        A draft bill has no number yet, so its display name can come back
+        empty. The folio fiscal is what the screen shows anyway, and it is
+        what the reviewer would look for.
+        """
+        self.ensure_one()
+        return (
+            self.document_id.uuid
+            or self.move_id.display_name
+            or self.env._("Factura sin número")
+        )
 
     def _link(self):
         """Link this bill. Returns True when it ended up linked."""
