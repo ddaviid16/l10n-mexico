@@ -129,12 +129,10 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
     document_id = fields.Many2one(
         comodel_name="l10n_mx_sat.document",
         string="Documento SAT",
-        readonly=True,
     )
     move_id = fields.Many2one(
         comodel_name="account.move",
         string="Factura",
-        readonly=True,
     )
     partner_id = fields.Many2one(
         related="move_id.partner_id",
@@ -145,7 +143,6 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
     cfdi_total = fields.Float(
         string="Total CFDI",
         digits=(16, 2),
-        readonly=True,
     )
     situation = fields.Selection(
         selection=[
@@ -154,17 +151,14 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
             ("none", "Sin candidatas"),
         ],
         string="Situación",
-        readonly=True,
     )
     suggested_order_id = fields.Many2one(
         comodel_name="purchase.order",
         string="Orden sugerida",
-        readonly=True,
     )
     candidate_order_ids = fields.Many2many(
         comodel_name="purchase.order",
         string="Órdenes candidatas",
-        readonly=True,
     )
     chosen_order_id = fields.Many2one(
         comodel_name="purchase.order",
@@ -173,6 +167,9 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
         help="Elige cuál de las candidatas corresponde a esta factura. "
         "El sistema no puede distinguirlas: todas cuadran en proveedor y total.",
     )
+    # These carry what default_get worked out. They are marked readonly in the
+    # view, not here: the web client does not send model-readonly fields back,
+    # so declaring them readonly emptied every line on the way to the button.
     selected = fields.Boolean(string="Enlazar")
 
     def _label(self):
@@ -193,6 +190,8 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
         """Link this bill. Returns True when it ended up linked."""
         self.ensure_one()
         move = self.move_id
+        if not move:
+            return False
         if self.situation == "exact":
             # Let Odoo decide again, exactly as it would at import time.
             move._find_and_set_purchase_orders(
