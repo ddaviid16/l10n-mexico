@@ -3,7 +3,7 @@
 
 {
     "name": "Mexico - SAT Vendor Bill / Purchase Order matching",
-    "version": "19.0.1.2.0",
+    "version": "19.0.1.2.1",
     "category": "Accounting/Localizations",
     "summary": "Match SAT vendor bills against existing purchase orders",
     "author": "Gray Matter Logic, Odoo Community Association (OCA)",

@@ -30,8 +30,13 @@ class TestPurchaseMatch(VendorBillTestCommon):
         cls.vendor = cls.env["res.partner"].create(
             {"name": EMISOR_NAME, "vat": EMISOR_RFC}
         )
+        # No purchase taxes: the order total has to be exactly the price so
+        # the tests can reason about matching without tax arithmetic.
         cls.product = cls.env["product.product"].create(
-            {"name": "Servicio de consultoria SAT"}
+            {
+                "name": "Servicio de consultoria SAT",
+                "supplier_taxes_id": [(5, 0, 0)],
+            }
         )
 
     def _purchase_order(self, price=CFDI_TOTAL, partner=None):
@@ -47,7 +52,7 @@ class TestPurchaseMatch(VendorBillTestCommon):
                             "product_id": self.product.id,
                             "product_qty": 1,
                             "price_unit": price,
-                            "taxes_id": [(5, 0, 0)],
+                            "tax_ids": [(5, 0, 0)],
                         },
                     )
                 ],

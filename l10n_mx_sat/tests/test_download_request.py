@@ -59,7 +59,12 @@ class TestSatMetadata(TransactionCase):
         self.assertEqual(normalize_sat_status("enproceso"), "in_progress")
         self.assertFalse(normalize_sat_status(""))
         self.assertFalse(normalize_sat_status(None))
-        self.assertEqual(normalize_sat_status("Weird Status"), "weird_status")
+        # Anything we do not recognise is dropped, never turned into a key.
+        # sat_status is a selection with three values, and deriving one from
+        # the raw text is what broke the status cron: the SAT answers
+        # "No Encontrado" too, and writing it aborted the whole check.
+        self.assertFalse(normalize_sat_status("Weird Status"))
+        self.assertFalse(normalize_sat_status("No Encontrado"))
 
     def test_parse_metadata_content(self):
         content = (
