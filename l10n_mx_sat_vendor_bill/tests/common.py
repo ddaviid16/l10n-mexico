@@ -86,6 +86,7 @@ class VendorBillTestCommon(TransactionCase):
         fecha="2026-02-26T16:57:09",
         fecha_timbrado="2026-02-26T16:57:10",
         conceptos=None,
+        retained=None,
     ):
         """Build a minimal CFDI XML with optional variants for edge cases."""
         serie_attr = f' Serie="{serie}"' if serie else ""
@@ -123,6 +124,11 @@ class VendorBillTestCommon(TransactionCase):
             Version="1.1"{uuid_attr}{fecha_attr}
             RfcProvCertif="SPR190613I52"/>
     </cfdi:Complemento>"""
+        impuestos = (
+            f'<cfdi:Impuestos TotalImpuestosRetenidos="{retained}"/>'
+            if retained
+            else ""
+        )
         xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4"
     Version="4.0"{serie_attr}{folio_attr}
@@ -138,6 +144,7 @@ class VendorBillTestCommon(TransactionCase):
     <cfdi:Conceptos>
         {conceptos}
     </cfdi:Conceptos>
+    {impuestos}
     {tfd}
 </cfdi:Comprobante>"""
         return xml.encode()

@@ -3,7 +3,7 @@
 
 import logging
 
-from odoo import models
+from odoo import api, models
 
 _logger = logging.getLogger(__name__)
 
@@ -11,7 +11,15 @@ _logger = logging.getLogger(__name__)
 class AccountMove(models.Model):
     _inherit = "account.move"
 
-    def _l10n_mx_sat_try_purchase_match(self, cfdi_total):
+    @api.model
+    def _l10n_mx_sat_match_amounts(self, cfdi_total, retained_total=0.0):
+        """Amounts worth trying against purchase orders, in order."""
+        amounts = [cfdi_total]
+        if retained_total:
+            amounts.append(cfdi_total + retained_total)
+        return amounts
+
+    def _l10n_mx_sat_try_purchase_match(self, cfdi_total, retained_total=0.0):
         """Link this bill to an existing purchase order, if Odoo finds exactly one.
 
         The matching is entirely Odoo's. A SAT XML carries no purchase order
@@ -32,9 +40,17 @@ class AccountMove(models.Model):
         if self.purchase_order_count:
             return False
 
-        self._find_and_set_purchase_orders(
-            [], self.partner_id.id, cfdi_total, from_ocr=False
-        )
+        # The CFDI Total already has the withholdings deducted; a purchase
+        # order normally does not carry them, so the two differ by exactly the
+        # retained amount and nothing matches. Try the declared total first --
+        # an order that does model the retention still matches on it -- and
+        # only then the amount before retention.
+        for amount in self._l10n_mx_sat_match_amounts(cfdi_total, retained_total):
+            self._find_and_set_purchase_orders(
+                [], self.partner_id.id, amount, from_ocr=False
+            )
+            if self.purchase_order_count:
+                break
         if not self.purchase_order_count:
             return False
         self.message_post(

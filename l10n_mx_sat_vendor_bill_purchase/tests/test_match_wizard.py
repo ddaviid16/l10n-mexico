@@ -130,8 +130,83 @@ class TestMatchWizard(TestPurchaseMatch):
         )
 
     def test_cfdi_total_shown_is_the_declared_one(self):
-        """What the reviewer compares against is the SAT's number, not Odoo's."""
+        """What the reviewer compares against is the SAT's number, not Odoo's.
+
+        Matching may run on a different amount when the CFDI carries a
+        withholding, but the column stays the declared total: that is the
+        figure on the document in front of them.
+        """
         document = self._import_without_orders("wiz9-1111-2222-3333-444455556666")
         line = self._line_for(self._wizard(), document)
         self.assertAlmostEqual(line.cfdi_total, CFDI_TOTAL, places=2)
         self.assertAlmostEqual(line.cfdi_total, document.total, places=2)
+        self.assertAlmostEqual(
+            line.match_total,
+            document.total,
+            places=2,
+            msg="with no withholding both numbers are the same",
+        )
+
+    def test_withheld_cfdi_is_matched_on_the_pre_retention_amount(self):
+        """H10: the two columns part ways exactly when there is a withholding."""
+        xml = self._cfdi_xml(
+            uuid="wizret-1111-2222-3333-444455556666", retained="150.00"
+        )
+        document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
+            self._parse(xml), xml, self.taxpayer, self.request
+        )
+        self.assertEqual(document.vendor_bill_id.purchase_order_count, 0)
+        order = self._purchase_order(price=CFDI_TOTAL + 150.00)
+
+        line = self._line_for(self._wizard(), document)
+        self.assertEqual(line.situation, "exact")
+        self.assertEqual(line.suggested_order_id, order)
+        self.assertAlmostEqual(line.cfdi_total, CFDI_TOTAL, places=2)
+        self.assertAlmostEqual(line.match_total, CFDI_TOTAL + 150.00, places=2)
+
+    def test_reviewer_can_assign_an_order_with_no_candidates(self):
+        """H10, other half: without this the reviewer is locked out.
+
+        Those rows are exactly the withheld CFDI whose totals do not line up.
+        The reviewer often knows which order it is; the screen has to let them
+        say so.
+        """
+        document = self._import_without_orders("wizany-1111-2222-3333-444455556666")
+        order = self._purchase_order(price=CFDI_TOTAL + 5000.00)
+
+        wizard = self._wizard()
+        line = self._line_for(wizard, document)
+        self.assertEqual(line.situation, "none", "the totals are nowhere near")
+
+        line.chosen_order_id = order
+        line.selected = True
+        wizard.action_link_selected()
+
+        self.assertEqual(document.vendor_bill_id.purchase_order_count, 1)
+        self.assertIn(document.vendor_bill_id.id, order.invoice_ids.ids)
+
+    def test_documents_of_other_companies_are_not_listed(self):
+        """H11: the scan used sudo, which skips the multi-company rule."""
+        document = self._import_without_orders("wizmc-1111-2222-3333-444455556666")
+        other = self.env["res.company"].create({"name": "Otra compañía SAT"})
+        outsider = self.env["res.users"].create(
+            {
+                "name": "Gerente de otra compañía",
+                "login": "sat.manager.other.company",
+                "company_id": other.id,
+                "company_ids": [(6, 0, [other.id])],
+                "group_ids": [
+                    (4, self.env.ref("l10n_mx_sat.group_sat_manager").id),
+                    (4, self.env.ref("base.group_user").id),
+                ],
+            }
+        )
+        Wizard = self.env["l10n_mx_sat.purchase.match"].with_user(outsider)
+        action = Wizard.action_open()
+        lines = Wizard.browse(action["res_id"]).line_ids
+
+        self.assertNotIn(
+            document,
+            lines.mapped("document_id"),
+            "a bill of another company must not even be listed",
+        )

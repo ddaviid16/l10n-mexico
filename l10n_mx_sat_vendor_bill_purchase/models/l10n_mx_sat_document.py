@@ -21,7 +21,9 @@ class L10nMxSatDocument(models.Model):
             # Isolated: failing to match must not cost the bill itself, nor
             # the rest of the package this CFDI arrived in.
             with self.env.cr.savepoint():
-                move._l10n_mx_sat_try_purchase_match(document.total)
+                move._l10n_mx_sat_try_purchase_match(
+                    document.total, document.retained_total
+                )
         except Exception:
             _logger.exception(
                 "Purchase order matching failed for CFDI %s", document.uuid

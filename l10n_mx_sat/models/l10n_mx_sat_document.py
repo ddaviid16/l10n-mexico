@@ -97,6 +97,14 @@ class L10nMxSatDocument(models.Model):
         "SAT. Los documentos sin consultar se revisan primero.",
     )
     total = fields.Float(digits=(16, 6), readonly=True)
+    retained_total = fields.Float(
+        string="Retenciones del CFDI",
+        digits=(16, 6),
+        readonly=True,
+        help="Suma de los impuestos retenidos que declara el CFDI. El Total "
+        "del comprobante ya viene con estas retenciones descontadas, así que "
+        "sumarlas devuelve el importe antes de retención.",
+    )
     currency_code = fields.Char(string="Currency", readonly=True)
     series = fields.Char(readonly=True)
     folio_number = fields.Char(string="Folio", readonly=True)
@@ -533,6 +541,21 @@ class L10nMxSatDocument(models.Model):
         return document
 
     @api.model
+    def _get_retained_total(self, tree):
+        """Total the CFDI declares as withheld, from its Impuestos node.
+
+        Only the node directly under Comprobante: each Concepto carries its
+        own Impuestos, and those would be counted twice.
+        """
+        node = tree.find("{*}Impuestos")
+        if node is None:
+            return 0.0
+        try:
+            return float(node.get("TotalImpuestosRetenidos") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @api.model
     def _extract_uuid(self, tree):
         tfd_nodes = tree.xpath("//*[local-name()='TimbreFiscalDigital']")
         if tfd_nodes:
@@ -725,6 +748,7 @@ class L10nMxSatDocument(models.Model):
                 vals["total"] = float(tree.get("Total") or 0)
             except (TypeError, ValueError) as err:
                 _logger.debug("Could not parse CFDI total: %s", err)
+            vals["retained_total"] = self._get_retained_total(tree)
             vals["issue_date"] = self._parse_sat_datetime(tree.get("Fecha"))
             tfd = tree.xpath("//*[local-name()='TimbreFiscalDigital']")
             if tfd:

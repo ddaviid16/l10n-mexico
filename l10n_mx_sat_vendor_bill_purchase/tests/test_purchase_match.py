@@ -96,6 +96,38 @@ class TestPurchaseMatch(VendorBillTestCommon):
             "the line-level link is what lets the order close",
         )
 
+    def test_withheld_cfdi_matches_the_order_before_retention(self):
+        """H10: the CFDI Total already has the withholding deducted.
+
+        A purchase order does not carry it, so the two differ by exactly the
+        retained amount -- far beyond the two cent tolerance. Agricultural
+        producers and leases live here, which is where the link matters most.
+        """
+        order = self._purchase_order(price=CFDI_TOTAL + 150.00)
+
+        xml = self._cfdi_xml(
+            uuid="retained1-1111-2222-3333-444455556666", retained="150.00"
+        )
+        document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
+            self._parse(xml), xml, self.taxpayer, self.request
+        )
+        self.assertEqual(document.retained_total, 150.00)
+        self.assertEqual(document.total, CFDI_TOTAL, "the declared total is untouched")
+        self.assertEqual(
+            document.vendor_bill_id.purchase_order_count,
+            1,
+            "it must match on the amount before retention",
+        )
+        self.assertIn(document.vendor_bill_id.id, order.invoice_ids.ids)
+
+    def test_a_cfdi_without_retention_is_only_tried_once(self):
+        """No withholding, no second pass: nothing to inflate the total with."""
+        Move = self.env["account.move"]
+        self.assertEqual(Move._l10n_mx_sat_match_amounts(1650.0, 0.0), [1650.0])
+        self.assertEqual(
+            Move._l10n_mx_sat_match_amounts(1650.0, 150.0), [1650.0, 1800.0]
+        )
+
     def test_two_matching_orders_link_nothing(self):
         """Two orders of the same amount is the case no total check can catch."""
         self._purchase_order()

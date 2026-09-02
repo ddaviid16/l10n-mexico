@@ -10,6 +10,10 @@
                     <b>reemplazan</b> por los de la orden de compra. Eso es lo que
                     aporta el producto y la cuenta contable, pero si alguien ya
                     capturó algo en la factura, se pierde.
+                    <br />
+                    En <b>Sin candidatas</b> puedes asignar la orden a mano si sabes
+                    cuál es: el sistema no la encontró, así que la responsabilidad de
+                    que sea la correcta es tuya.
                 </div>
                 <field
                     name="line_ids"
@@ -23,6 +27,12 @@
                         <field name="invoice_date" readonly="1" />
                         <field name="cfdi_total" readonly="1" sum="Total" />
                         <field
+                            name="match_total"
+                            readonly="1"
+                            optional="show"
+                            string="Cotejado por"
+                        />
+                        <field
                             name="situation"
                             readonly="1"
                             widget="badge"
@@ -31,10 +41,15 @@
                             decoration-muted="situation == 'none'"
                         />
                         <field name="suggested_order_id" readonly="1" />
-                        <field name="candidate_order_ids" column_invisible="1" />
+                        <field
+                            name="candidate_order_ids"
+                            readonly="1"
+                            optional="hide"
+                            widget="many2many_tags"
+                        />
                         <field
                             name="chosen_order_id"
-                            readonly="situation != 'several'"
+                            readonly="situation == 'exact'"
                             options="{'no_create': True}"
                         />
                         <field name="move_id" optional="hide" readonly="1" />

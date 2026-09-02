@@ -52,27 +52,36 @@ class L10nMxSatPurchaseMatch(models.TransientModel):
         _find_and_set_purchase_orders. So this reports exactly what the real
         match would do without touching a single record.
         """
-        documents = (
-            self.env["l10n_mx_sat.document"]
-            .sudo()
-            .search(
-                [
-                    ("vendor_bill_id", "!=", False),
-                    ("vendor_bill_id.state", "=", "draft"),
-                ],
-                order="issue_date desc",
-                limit=_SCAN_LIMIT,
-            )
+        # No sudo: l10n_mx_sat.document carries a multi-company record rule,
+        # and sudo would skip it. A SAT manager must not see, let alone link,
+        # bills belonging to a company they cannot access.
+        documents = self.env["l10n_mx_sat.document"].search(
+            [
+                ("vendor_bill_id", "!=", False),
+                ("vendor_bill_id.state", "=", "draft"),
+            ],
+            order="issue_date desc",
+            limit=_SCAN_LIMIT,
         )
         lines = []
         for document in documents:
             move = document.vendor_bill_id
             if move.purchase_order_count or not move.partner_id:
                 continue
-            method, order_lines, _dummy = move._match_purchase_orders(
-                [], move.partner_id.id, document.total, False, 10
+            amounts = move._l10n_mx_sat_match_amounts(
+                document.total, document.retained_total
             )
-            orders = order_lines.order_id
+            match_total = document.total
+            orders = self.env["purchase.order"]
+            method = "no_match"
+            for amount in amounts:
+                method, order_lines, _dummy = move._match_purchase_orders(
+                    [], move.partner_id.id, amount, False, 10
+                )
+                orders = order_lines.order_id
+                if orders:
+                    match_total = amount
+                    break
             if method == "total_match" and len(orders) == 1:
                 situation = "exact"
             elif orders:
@@ -84,6 +93,7 @@ class L10nMxSatPurchaseMatch(models.TransientModel):
                     "document_id": document.id,
                     "move_id": move.id,
                     "cfdi_total": document.total,
+                    "match_total": match_total,
                     "situation": situation,
                     "suggested_order_id": orders.id if situation == "exact" else False,
                     "candidate_order_ids": [(6, 0, orders.ids)],
@@ -161,6 +171,14 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
         digits=(16, 2),
         readonly=True,
     )
+    match_total = fields.Float(
+        string="Importe cotejado",
+        digits=(16, 2),
+        readonly=True,
+        help="Importe con el que se buscaron órdenes. Cuando el CFDI trae "
+        "retenciones es el total antes de retención, porque la orden de "
+        "compra normalmente no las lleva.",
+    )
     situation = fields.Selection(
         selection=[
             ("exact", "Coincide exacta"),
@@ -183,9 +201,12 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
     chosen_order_id = fields.Many2one(
         comodel_name="purchase.order",
         string="Orden a enlazar",
-        domain="[('id', 'in', candidate_order_ids)]",
-        help="Elige cuál de las candidatas corresponde a esta factura. "
-        "El sistema no puede distinguirlas: todas cuadran en proveedor y total.",
+        domain="[('partner_id', '=', partner_id), ('state', 'in', "
+        "('purchase', 'done'))]",
+        help="Cualquier orden confirmada de este proveedor, no solo las que "
+        "el sistema encontró. Si sabes cuál es y los totales no cuadran, "
+        "puedes asignarla igualmente: la responsabilidad de que sea la "
+        "correcta pasa a ser tuya.",
     )
     selected = fields.Boolean(string="Enlazar")
 
@@ -212,11 +233,12 @@ class L10nMxSatPurchaseMatchLine(models.TransientModel):
         if self.situation == "exact":
             # Let Odoo decide again, exactly as it would at import time.
             move._find_and_set_purchase_orders(
-                [], move.partner_id.id, self.cfdi_total, from_ocr=False
+                [], move.partner_id.id, self.match_total, from_ocr=False
             )
         elif self.chosen_order_id:
-            # A person resolved the ambiguity, so apply their choice directly:
-            # re-running the match would find several again and do nothing.
+            # A person resolved it, so apply their choice directly: re-running
+            # the match would find the same several -- or nothing at all when
+            # the totals differ -- and do nothing.
             move._set_purchase_orders(self.chosen_order_id, force_write=True)
         else:
             return False
