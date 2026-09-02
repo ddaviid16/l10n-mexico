@@ -198,6 +198,11 @@ class TestMatchWizard(TestPurchaseMatch):
                 "group_ids": [
                     (4, self.env.ref("l10n_mx_sat.group_sat_manager").id),
                     (4, self.env.ref("base.group_user").id),
+                    # This screen rewrites the lines of a vendor bill, so it
+                    # needs accounting rights on top of the SAT ones. Without
+                    # them the scan cannot even read account.move and fails
+                    # before the company filter this test is about.
+                    (4, self.env.ref("account.group_account_invoice").id),
                 ],
             }
         )
