@@ -533,10 +533,15 @@ class L10nMxSatDocument(models.Model):
             "mimetype": "application/xml",
             "company_id": taxpayer.company_id.id,
         }
+        # ir.attachment delegates its access check to the record it is linked
+        # to, and l10n_mx_sat.document grants write to nobody: every write goes
+        # through _sat_write. Without sudo here the import only survives when
+        # the cron runs it as OdooBot, and raises AccessError for any person
+        # pressing the button -- losing the CFDI instead of storing it.
         if attachment:
-            attachment.write({"raw": xml_bytes})
+            attachment.sudo().write({"raw": xml_bytes})
         else:
-            attachment = self.env["ir.attachment"].create(attachment_vals)
+            attachment = self.env["ir.attachment"].sudo().create(attachment_vals)
             document._sat_write({"attachment_id": attachment.id})
         return document
 

@@ -321,6 +321,86 @@ class TestSatDocument(TransactionCase):
         action = doc.action_download_xml()
         self.assertIn("/web/content/", action["url"])
 
+    def _cfdi_bytes(self, uuid, total="50.00"):
+        return (
+            b'<?xml version="1.0" encoding="UTF-8"?>'
+            b'<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" '
+            b'xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Total="'
+            + total.encode()
+            + b'">'
+            b'<cfdi:Emisor Rfc="EKU9003173C9" Nombre="Emisor"/>'
+            b'<cfdi:Receptor Rfc="AAA010101AAA" Nombre="Receptor"/>'
+            b"<cfdi:Complemento>"
+            b'<tfd:TimbreFiscalDigital UUID="' + uuid.encode() + b'"/>'
+            b"</cfdi:Complemento></cfdi:Comprobante>"
+        )
+
+    def _sat_manager(self):
+        """A real person holding the module's top role.
+
+        These tests run as superuser by default, and the superuser skips every
+        access check -- which is exactly what hid this bug until a download was
+        launched from the button instead of the cron.
+        """
+        return self.env["res.users"].create(
+            {
+                "name": "Encargada del SAT",
+                "login": "sat.manager.attachment",
+                "group_ids": [
+                    (4, self.env.ref("base.group_user").id),
+                    (4, self.env.ref("l10n_mx_sat.group_sat_manager").id),
+                ],
+            }
+        )
+
+    def test_a_person_can_import_a_new_cfdi(self):
+        """Storing the XML must not depend on who pressed Download.
+
+        ir.attachment checks access against the record it hangs from, and
+        l10n_mx_sat.document grants write to no group at all.
+        """
+        request = self._create_request(direction="issued")
+        uuid = "PERSON-NEW-1234567890123456789012345678"
+        xml_bytes = self._cfdi_bytes(uuid)
+        Document = self.Document.with_user(self._sat_manager())
+
+        doc = Document._upsert_from_xml(
+            self._parse_xml(xml_bytes), xml_bytes, self.taxpayer, request
+        )
+
+        self.assertTrue(doc, "the CFDI must be imported, not dropped")
+        self.assertTrue(doc.attachment_id, "the XML must be stored")
+        self.assertEqual(doc.attachment_id.raw, xml_bytes)
+
+    def test_a_person_can_reimport_an_existing_cfdi(self):
+        """Overlapping ranges are normal: the second pass rewrites the XML.
+
+        This is the branch that lost six CFDI in production -- the cron had
+        already imported them as OdooBot, so a manual download landed on the
+        write branch and raised AccessError.
+        """
+        request = self._create_request(direction="issued")
+        uuid = "PERSON-AGAIN-123456789012345678901234"
+        xml_bytes = self._cfdi_bytes(uuid)
+        # First pass as the cron does it.
+        first = self.Document._upsert_from_xml(
+            self._parse_xml(xml_bytes), xml_bytes, self.taxpayer, request
+        )
+        self.assertTrue(first.attachment_id)
+
+        again = self._cfdi_bytes(uuid, total="75.00")
+        second = self.Document.with_user(self._sat_manager())._upsert_from_xml(
+            self._parse_xml(again), again, self.taxpayer, request
+        )
+
+        self.assertEqual(second, first, "the same CFDI must not be duplicated")
+        self.assertEqual(
+            second.attachment_id,
+            first.attachment_id,
+            "the attachment is rewritten, not replaced",
+        )
+        self.assertEqual(second.attachment_id.raw, again)
+
     def test_extract_uuid_from_folio_fiscal(self):
         xml = b'<root FolioFiscal="folio-uuid-123"/>'
         tree = self._parse_xml(xml)
