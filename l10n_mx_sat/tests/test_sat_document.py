@@ -13,6 +13,8 @@ from odoo.tools import mute_logger
 from odoo.addons.l10n_mx_sat.services.sat_helpers import SAFE_XML_PARSER
 from odoo.addons.l10n_mx_sat.services.sat_metadata import normalize_sat_status
 
+FAKE_PDF = b"%PDF-1.4 fake"
+
 _PATCH_GET_CLIENT = (
     "odoo.addons.l10n_mx_sat.models.l10n_mx_sat_taxpayer.L10nMxSatTaxpayer._get_client"
 )
@@ -400,6 +402,139 @@ class TestSatDocument(TransactionCase):
             "the attachment is rewritten, not replaced",
         )
         self.assertEqual(second.attachment_id.raw, again)
+
+    # ------------------------------------------------------------------
+    # Printed representation
+    # ------------------------------------------------------------------
+
+    def _document_with_xml(self, uuid):
+        """Import a CFDI so the document carries its XML attachment."""
+        request = self._create_request(direction="issued")
+        xml_bytes = self._cfdi_bytes(uuid)
+        return self.Document._upsert_from_xml(
+            self._parse_xml(xml_bytes), xml_bytes, self.taxpayer, request
+        )
+
+    def _patched_parse(self):
+        """Hand the raw XML straight through instead of building a CFDI."""
+        return patch("satcfdi.cfdi.CFDI.from_string", side_effect=lambda raw: raw)
+
+    def _patched_render(self, side_effect=None):
+        """satcfdi stands aside: these tests are about what we do with bytes.
+
+        A real render costs seconds and needs native libraries, and being
+        correct about the SAT's layout is satcfdi's job, not ours.
+        """
+        if side_effect is not None:
+            return patch("satcfdi.render.pdf_bytes", side_effect=side_effect)
+        return patch("satcfdi.render.pdf_bytes", return_value=FAKE_PDF)
+
+    def test_render_stores_the_pdf_as_an_attachment(self):
+        doc = self._document_with_xml("PDF-ONE-1234567890123456789012345")
+        self.assertFalse(doc.pdf_attachment_id)
+
+        with self._patched_parse(), self._patched_render():
+            self.assertEqual(doc._render_pdf(), 1)
+
+        self.assertTrue(doc.pdf_attachment_id)
+        self.assertEqual(doc.pdf_attachment_id.raw, FAKE_PDF)
+        self.assertEqual(doc.pdf_attachment_id.mimetype, "application/pdf")
+        self.assertEqual(doc.pdf_attachment_id.name, f"{doc.uuid}.pdf")
+
+    def test_rendering_twice_rewrites_instead_of_duplicating(self):
+        """Overlapping downloads are normal; a second pass must not pile up."""
+        doc = self._document_with_xml("PDF-TWICE-12345678901234567890123")
+        with self._patched_parse(), self._patched_render():
+            doc._render_pdf()
+        first = doc.pdf_attachment_id
+
+        with self._patched_parse(), self._patched_render(
+            side_effect=lambda xlm, **kw: b"%PDF-1.4 second"
+        ):
+            doc._render_pdf()
+
+        self.assertEqual(doc.pdf_attachment_id, first, "same attachment, rewritten")
+        self.assertEqual(doc.pdf_attachment_id.raw, b"%PDF-1.4 second")
+
+    @mute_logger("odoo.addons.l10n_mx_sat.models.l10n_mx_sat_document")
+    def test_a_failed_render_costs_only_that_document(self):
+        """One CFDI the template cannot lay out must not sink the batch."""
+        good = self._document_with_xml("PDF-GOOD-1234567890123456789012")
+        bad = self._document_with_xml("PDF-BAD-12345678901234567890123")
+
+        def render(xlm, **kwargs):
+            if b"PDF-BAD" in xlm:
+                raise ValueError("addenda the template cannot lay out")
+            return FAKE_PDF
+
+        with self._patched_parse(), self._patched_render(side_effect=render):
+            rendered = (good | bad)._render_pdf()
+
+        self.assertEqual(rendered, 1)
+        self.assertTrue(good.pdf_attachment_id, "the good one keeps its PDF")
+        self.assertFalse(bad.pdf_attachment_id)
+
+    def test_cron_skips_documents_that_already_have_a_pdf(self):
+        done = self._document_with_xml("PDF-DONE-1234567890123456789012")
+        todo = self._document_with_xml("PDF-TODO-1234567890123456789012")
+        with self._patched_parse(), self._patched_render():
+            done._render_pdf()
+
+        self.assertNotIn(done, self.Document.search(self.Document._build_pdf_render_domain()))
+        with self._patched_parse(), self._patched_render():
+            self.Document._cron_render_pdf()
+
+        self.assertTrue(todo.pdf_attachment_id)
+
+    def test_cron_honours_its_batch_limit(self):
+        """The bound is the point: rendering is slow and the cron has a clock."""
+        for index in range(3):
+            self._document_with_xml(f"PDF-BATCH-{index}-123456789012345678")
+
+        with self._patched_parse(), self._patched_render():
+            self.assertEqual(self.Document._cron_render_pdf(limit=2), 2)
+
+    def test_only_a_sat_manager_can_render_from_the_button(self):
+        """The write goes through _sat_write, which is sudo: the ACL alone
+        would not stop a read-only SAT user."""
+        doc = self._document_with_xml("PDF-PERM-1234567890123456789012")
+        reader = self.env["res.users"].create(
+            {
+                "name": "Consulta SAT",
+                "login": "sat.reader.pdf",
+                "group_ids": [
+                    (4, self.env.ref("base.group_user").id),
+                    (4, self.env.ref("l10n_mx_sat.group_sat_user").id),
+                ],
+            }
+        )
+        with self.assertRaises(AccessError):
+            doc.with_user(reader).action_render_pdf()
+        self.assertFalse(doc.pdf_attachment_id)
+
+    def test_render_button_refuses_documents_without_xml(self):
+        doc = self.Document._sat_create(
+            [
+                {
+                    "taxpayer_id": self.taxpayer.id,
+                    "uuid": "PDF-NOXML-123456789012345678901",
+                    "document_kind": "cfdi",
+                    "direction": "issued",
+                }
+            ]
+        )
+        with self.assertRaises(UserError):
+            doc.action_render_pdf()
+
+    def test_download_pdf_points_at_the_attachment(self):
+        doc = self._document_with_xml("PDF-URL-12345678901234567890123")
+        self.assertFalse(doc.action_download_pdf(), "nothing to download yet")
+
+        with self._patched_parse(), self._patched_render():
+            doc._render_pdf()
+
+        action = doc.action_download_pdf()
+        self.assertIn(f"/web/content/{doc.pdf_attachment_id.id}", action["url"])
 
     def test_extract_uuid_from_folio_fiscal(self):
         xml = b'<root FolioFiscal="folio-uuid-123"/>'

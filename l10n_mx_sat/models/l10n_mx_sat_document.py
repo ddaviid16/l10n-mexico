@@ -27,6 +27,9 @@ _REFRESHABLE_SAT_STATUSES = ("valid", "in_progress")
 _STATUS_CHECK_BATCH = 200
 # Leave a document alone for this long after a successful check.
 _STATUS_CHECK_INTERVAL_DAYS = 7
+# CFDIs per PDF render run. Rendering costs seconds per document -- it is
+# WeasyPrint laying out a whole page -- so this is what bounds a cron run.
+_PDF_RENDER_BATCH = 100
 
 
 class L10nMxSatDocument(models.Model):
@@ -120,6 +123,14 @@ class L10nMxSatDocument(models.Model):
         string="XML",
         readonly=True,
         ondelete="set null",
+    )
+    pdf_attachment_id = fields.Many2one(
+        comodel_name="ir.attachment",
+        string="PDF",
+        readonly=True,
+        ondelete="set null",
+        help="Representación impresa del CFDI, generada por el módulo. "
+        "El SAT nunca entrega PDF: la descarga masiva sólo trae el XML.",
     )
     display_name = fields.Char(
         compute="_compute_display_name", store=True, readonly=True
@@ -802,6 +813,155 @@ class L10nMxSatDocument(models.Model):
             "type": "ir.actions.act_url",
             "url": f"/web/content/{self.attachment_id.id}?download=true",
             "target": "self",
+        }
+
+    def action_download_pdf(self):
+        self.ensure_one()
+        if not self.pdf_attachment_id:
+            return False
+        return {
+            "type": "ir.actions.act_url",
+            "url": f"/web/content/{self.pdf_attachment_id.id}?download=true",
+            "target": "self",
+        }
+
+    # ------------------------------------------------------------------
+    # Printed representation (representacion impresa)
+    # ------------------------------------------------------------------
+
+    @api.model
+    def _build_pdf_render_domain(self):
+        """CFDIs whose XML we hold and whose PDF has not been built yet."""
+        return [
+            ("has_xml", "=", True),
+            ("attachment_id", "!=", False),
+            ("pdf_attachment_id", "=", False),
+        ]
+
+    def _store_pdf(self, pdf_bytes):
+        """Attach the rendered PDF, rewriting it when one is already there.
+
+        Sudo for the same reason the XML attachment needs it: ir.attachment
+        checks access against the record it hangs from, and this model grants
+        write to no group at all.
+        """
+        self.ensure_one()
+        attachment = self.pdf_attachment_id
+        if attachment:
+            attachment.sudo().write({"raw": pdf_bytes})
+            return attachment
+        attachment = (
+            self.env["ir.attachment"]
+            .sudo()
+            .create(
+                {
+                    "name": f"{self.uuid}.pdf",
+                    "raw": pdf_bytes,
+                    "res_model": self._name,
+                    "res_id": self.id,
+                    "mimetype": "application/pdf",
+                    "company_id": self.company_id.id,
+                }
+            )
+        )
+        self._sat_write({"pdf_attachment_id": attachment.id})
+        return attachment
+
+    def _render_pdf(self):
+        """Build the printed representation of each CFDI and store it.
+
+        The rendering is satcfdi's own: it already implements what the SAT
+        expects of a representacion impresa, QR included, and keeping a QWeb
+        copy of that in step with the SAT is work nobody needs to take on.
+
+        Every document renders inside its own savepoint. A CFDI carrying an
+        addenda the template cannot lay out must cost that one document and
+        nothing else. Returns how many ended up with a PDF.
+        """
+        # Imported here rather than at module level on purpose: WeasyPrint
+        # needs native libraries (Pango, cairo), and a container missing them
+        # would otherwise stop the whole addon from loading.
+        from satcfdi import render
+        from satcfdi.cfdi import CFDI
+
+        rendered = 0
+        for document in self:
+            attachment = document.attachment_id
+            if not attachment:
+                continue
+            try:
+                with self.env.cr.savepoint():
+                    pdf = render.pdf_bytes(CFDI.from_string(attachment.raw))
+                    document._store_pdf(pdf)
+                    rendered += 1
+            except Exception:
+                _logger.exception(
+                    "Could not render the printed representation of CFDI %s",
+                    document.uuid,
+                )
+                self.env.invalidate_all()
+        return rendered
+
+    @api.model
+    def _cron_render_pdf(self, limit=None):
+        """Build the printed representations still missing, a batch at a time.
+
+        Deliberately outside the download. Rendering runs at seconds per
+        document, so a package of a few hundred CFDIs would put minutes of
+        third-party work inside the transaction that imports them, and a
+        worker killed on its time limit would take the whole package with it.
+        """
+        limit = limit or _PDF_RENDER_BATCH
+        documents = self.sudo().search(
+            self._build_pdf_render_domain(), order="issue_date desc", limit=limit
+        )
+        if not documents:
+            return 0
+        rendered = documents._render_pdf()
+        _logger.info(
+            "CFDI printed representation: %s of %s document(s) rendered",
+            rendered,
+            len(documents),
+        )
+        return rendered
+
+    def action_render_pdf(self):
+        """Button: build the printed representation of the selection now.
+
+        Guarded here rather than on the server action, for the same reason as
+        the other two buttons: the write goes through _sat_write, which is
+        sudo, so the model ACL would not stop a read-only SAT user by itself.
+        """
+        if not self.env.user.has_group("l10n_mx_sat.group_sat_manager"):
+            raise AccessError(
+                self.env._(
+                    "Solo un gerente SAT puede generar la representación "
+                    "impresa de los documentos."
+                )
+            )
+        renderable = self.filtered("attachment_id")
+        if not renderable:
+            raise UserError(
+                self.env._(
+                    "Ninguno de los documentos seleccionados tiene guardado "
+                    "el XML, que es de donde se genera el PDF."
+                )
+            )
+        rendered = renderable._render_pdf()
+        failed = len(renderable) - rendered
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": self.env._("Representación impresa"),
+                "message": self.env._(
+                    "%(rendered)s PDF generado(s). Sin generar: %(failed)s.",
+                    rendered=rendered,
+                    failed=failed,
+                ),
+                "type": "warning" if failed else "success",
+                "sticky": False,
+            },
         }
 
     @api.model

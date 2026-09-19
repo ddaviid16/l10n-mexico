@@ -69,6 +69,21 @@
                         class="btn-primary"
                         invisible="not has_xml"
                     />
+                    <button
+                        name="action_render_pdf"
+                        type="object"
+                        string="Generar PDF"
+                        class="btn-secondary"
+                        icon="fa-file-pdf-o"
+                        invisible="not has_xml or pdf_attachment_id"
+                    />
+                    <button
+                        name="action_download_pdf"
+                        type="object"
+                        string="Descargar PDF"
+                        class="btn-primary"
+                        invisible="not pdf_attachment_id"
+                    />
                 </header>
                 <sheet>
                     <group>
@@ -102,6 +117,7 @@
                             <field name="series" readonly="1" />
                             <field name="folio_number" readonly="1" />
                             <field name="has_xml" readonly="1" />
+                            <field name="pdf_attachment_id" invisible="1" />
                             <field name="download_request_id" readonly="1" />
                         </group>
                     </group>
@@ -155,6 +171,16 @@
                     string="Without XML"
                     name="no_xml"
                     domain="[('has_xml', '=', False)]"
+                />
+                <filter
+                    string="Con PDF"
+                    name="has_pdf"
+                    domain="[('pdf_attachment_id', '!=', False)]"
+                />
+                <filter
+                    string="Sin PDF"
+                    name="no_pdf"
+                    domain="[('pdf_attachment_id', '=', False)]"
                 />
                 <separator />
                 <filter
@@ -236,6 +262,15 @@
         <field name="binding_view_types">list,form</field>
         <field name="state">code</field>
         <field name="code">action = records.action_check_sat_status()</field>
+    </record>
+
+    <record id="action_render_pdf" model="ir.actions.server">
+        <field name="name">Generar representación impresa</field>
+        <field name="model_id" ref="model_l10n_mx_sat_document" />
+        <field name="binding_model_id" ref="model_l10n_mx_sat_document" />
+        <field name="binding_view_types">list,form</field>
+        <field name="state">code</field>
+        <field name="code">action = records.action_render_pdf()</field>
     </record>
 
     <record id="l10n_mx_sat_document_action" model="ir.actions.act_window">
