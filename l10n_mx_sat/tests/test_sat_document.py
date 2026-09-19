@@ -408,11 +408,17 @@ class TestSatDocument(TransactionCase):
     # ------------------------------------------------------------------
 
     def _document_with_xml(self, uuid):
-        """Import a CFDI so the document carries its XML attachment."""
-        request = self._create_request(direction="issued")
+        """Import a CFDI so the document carries its XML attachment.
+
+        One request serves the whole test on purpose: download.request holds a
+        unique fingerprint over taxpayer, kind, direction, type and date range,
+        so asking for a second one with the same parameters is refused.
+        """
+        if not getattr(self, "_pdf_request", None):
+            self._pdf_request = self._create_request(direction="issued")
         xml_bytes = self._cfdi_bytes(uuid)
         return self.Document._upsert_from_xml(
-            self._parse_xml(xml_bytes), xml_bytes, self.taxpayer, request
+            self._parse_xml(xml_bytes), xml_bytes, self.taxpayer, self._pdf_request
         )
 
     def _patched_parse(self):

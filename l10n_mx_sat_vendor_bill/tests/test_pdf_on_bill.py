@@ -67,24 +67,19 @@ class TestPdfOnBill(VendorBillTestCommon):
         self.assertEqual(attachments.raw, b"%PDF-1.4 second")
 
     def test_a_cfdi_without_a_bill_only_gets_its_own_pdf(self):
-        """Payment complements never become bills; nothing must break."""
-        request = self.env["l10n_mx_sat.download.request"].create(
-            {
-                "taxpayer_id": self.taxpayer.id,
-                "document_kind": "cfdi",
-                "direction": "issued",
-                "request_type": "xml",
-                "date_from": "2026-03-01 00:00:00",
-                "date_to": "2026-03-31 23:59:59",
-                "state": "downloading",
-            }
-        )
+        """A payment complement never becomes a bill; nothing must break.
+
+        Tipo P is the real case: it arrives in the same received package as
+        the invoices and the importer deliberately skips it, so the document
+        exists with no move behind it.
+        """
         xml_bytes = self._cfdi_xml(
-            uuid="PDFNOBILL-1111-2222-3333-44445555", folio="PDF2"
+            uuid="PDFNOBILL-1111-2222-3333-44445555", tipo="P", folio="PDF2"
         )
         document = self.env["l10n_mx_sat.document"]._upsert_from_xml(
-            self._parse(xml_bytes), xml_bytes, self.taxpayer, request
+            self._parse(xml_bytes), xml_bytes, self.taxpayer, self.request
         )
+        self.assertTrue(document, "the CFDI is still imported")
         self.assertFalse(document.vendor_bill_id)
 
         with self._patched_parse(), self._patched_render():
