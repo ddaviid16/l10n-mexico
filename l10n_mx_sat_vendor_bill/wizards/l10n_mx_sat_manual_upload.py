@@ -208,6 +208,11 @@ class L10nMxSatManualUpload(models.TransientModel):
                 "res_model": "account.move",
                 "domain": [("id", "in", moves.ids)],
                 "view_mode": "list,form",
+                # views has to be spelled out. The web client reads it as is
+                # and never derives it from view_mode: only actions coming
+                # from the database arrive with it already computed.
+                "views": [(False, "list"), (False, "form")],
+                "context": {"create": False},
             }
             if moves
             else {"type": "ir.actions.act_window_close"}

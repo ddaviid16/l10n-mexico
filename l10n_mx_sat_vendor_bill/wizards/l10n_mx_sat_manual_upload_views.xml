@@ -39,12 +39,23 @@
         </field>
     </record>
 
-    <!-- No menuitem on purpose: the menu lives in Accounting, under Vendors,
-         and is assigned separately. This action is what it points at. -->
     <record id="l10n_mx_sat_manual_upload_action" model="ir.actions.act_window">
         <field name="name">Cargar CFDI de proveedor (.zip)</field>
         <field name="res_model">l10n_mx_sat.manual.upload</field>
         <field name="view_mode">form</field>
         <field name="target">new</field>
     </record>
+
+    <!-- Last under Accounting / Vendors: its siblings run 1, 2, 20, 100 and
+         200, so anything above 200 lands below "Vendors". Shipped in code
+         rather than drawn by hand, or it would live in one database only and
+         be lost on the next rebuild. -->
+    <menuitem
+        id="menu_l10n_mx_sat_manual_upload"
+        name="Cargar CFDI de proveedor (.zip)"
+        parent="account.menu_finance_payables"
+        action="l10n_mx_sat_manual_upload_action"
+        sequence="210"
+        groups="account.group_account_invoice"
+    />
 </odoo>

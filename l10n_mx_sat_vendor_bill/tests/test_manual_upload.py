@@ -73,6 +73,22 @@ class TestManualUpload(VendorBillTestCommon):
         self.assertEqual(len(documents), 2)
         self.assertEqual(len(documents.mapped("vendor_bill_id")), 2)
 
+    def test_the_follow_up_action_carries_its_views(self):
+        """The web client reads action.views as is and never builds it.
+
+        Only actions loaded from the database arrive with views computed; a
+        dict returned from Python does not, and the browser died on
+        "Cannot read properties of undefined (reading 'map')".
+        """
+        action = self._wizard(
+            {"a.xml": self._cfdi_xml(uuid="VIEWS-1111-2222-3333-444455556666")}
+        ).action_import()
+
+        follow_up = action["params"]["next"]
+        self.assertEqual(follow_up["type"], "ir.actions.act_window")
+        self.assertTrue(follow_up.get("views"), "without this the client crashes")
+        self.assertEqual([view[1] for view in follow_up["views"]], ["list", "form"])
+
     def test_a_cfdi_for_another_rfc_is_skipped_and_reported(self):
         """The silent drop is the trap: it has to be named in the summary."""
         stranger = self._cfdi_xml(
