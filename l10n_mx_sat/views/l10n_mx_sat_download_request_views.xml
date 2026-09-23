@@ -27,6 +27,13 @@
                 />
                 <field name="reported_cfdi_count" string="SAT reported" />
                 <field name="document_count" string="Procesados" />
+                <field
+                    name="is_manual"
+                    string="Manual"
+                    widget="boolean_toggle"
+                    readonly="1"
+                    optional="show"
+                />
             </list>
         </field>
     </record>
@@ -204,6 +211,17 @@
                         context="{'group_by': 'request_type'}"
                     />
                 </group>
+                <separator />
+                <filter
+                    string="Carga manual"
+                    name="is_manual"
+                    domain="[('is_manual', '=', True)]"
+                />
+                <filter
+                    string="Descargadas del SAT"
+                    name="not_manual"
+                    domain="[('is_manual', '=', False)]"
+                />
             </search>
         </field>
     </record>

@@ -136,6 +136,15 @@ class L10nMxSatDownloadRequest(models.Model):
         readonly=True,
         index=True,
     )
+    is_manual = fields.Boolean(
+        string="Carga manual",
+        readonly=True,
+        default=False,
+        index=True,
+        help="La solicitud nunca se envió al SAT: alguien subió el ZIP a mano. "
+        "Sirve para distinguir en los documentos y en las facturas qué llegó "
+        "por descarga y qué se cargó de urgencia.",
+    )
     package_ids = fields.One2many(
         comodel_name="l10n_mx_sat.download.package",
         inverse_name="request_id",
@@ -215,6 +224,14 @@ class L10nMxSatDownloadRequest(models.Model):
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
+            # A manual upload never reached the SAT, so the duplicate guard --
+            # which is there to avoid asking the SAT twice for the same range,
+            # its code 5002 -- has nothing to protect. Leaving the fingerprint
+            # empty lets several coexist: Postgres allows repeated NULLs in a
+            # UNIQUE column.
+            if vals.get("is_manual"):
+                vals.setdefault("request_fingerprint", False)
+                continue
             if not vals.get("request_fingerprint"):
                 vals["request_fingerprint"] = self._build_fingerprint_from_vals(vals)
             if self.search(
